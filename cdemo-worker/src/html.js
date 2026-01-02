@@ -44,7 +44,7 @@ tbody tr:hover{background:rgba(74,139,255,0.02)}
 .sticky-nav{position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(255,255,255,0.95);backdrop-filter:blur(12px);border-bottom:1px solid #E5E7EB}
 .nav-tabs{display:flex;align-items:center;gap:.5rem;padding:.75rem 1rem;overflow-x:auto}
 .nav-tabs::-webkit-scrollbar{display:none}
-.tab-btn{padding:.625rem 1.5rem;border-radius:.75rem;font-weight:600;font-size:.95rem;cursor:pointer;background:transparent;color:#6B6B6B;white-space:nowrap;display:flex;align-items:center;gap:.5rem;transition:all .2s}
+.tab-btn{padding:.5rem .75rem;border-radius:.5rem;font-weight:600;font-size:.95rem;cursor:pointer;background:transparent;color:#6B6B6B;white-space:nowrap;display:flex;align-items:center;gap:.5rem;transition:all .2s}
 .tab-btn:hover{color:#4A8BFF;background:rgba(74,139,255,0.05)}
 .tab-btn.active{background:#4A8BFF;color:#fff;box-shadow:0 4px 12px rgba(74,139,255,0.25)}
 .tab-btn .icon{font-size:1.1rem}
