@@ -361,6 +361,7 @@ export class DatabaseService {
   async importCards(cards) {
     const CARDS_PER_INSERT = 12; // Keep low to respect D1 limits
     let success = 0, skipped = 0, errors = [];
+    const affectedBins = new Set();
     
     // 1. Chỉ thực hiện Insert vào cdata (Write tối thiểu)
     for (let i = 0; i < cards.length; i += CARDS_PER_INSERT) {
@@ -370,6 +371,7 @@ export class DatabaseService {
         const values = [];
         chunk.forEach(c => {
           values.push(c.pan, c.mm, c.yy, c.cvv, c.bin, c.last4, c.info || null);
+          if (c.bin) affectedBins.add(c.bin);
         });
         await this.db.prepare(`INSERT OR IGNORE INTO cdata (pan, mm, yy, cvv, Bin, last4, info, status) VALUES ${placeholders}`).bind(...values).run();
         success += chunk.length;
@@ -379,10 +381,61 @@ export class DatabaseService {
       }
     }
 
-    // 2. KHÔNG update bin_inventory hay country_stats tại đây để tiết kiệm Write
-    // 3. KHÔNG clear cache để đảm bảo Dashboard vẫn load nhanh (dữ liệu cũ)
+    // 2. Cập nhật Delta cho các Bin bị ảnh hưởng (Tối ưu Read/Write)
+    if (affectedBins.size > 0) {
+      try {
+        await this.updateBinStats([...affectedBins]);
+      } catch (e) {
+        console.error("Delta update failed:", e);
+        // Không fail request import nếu update stats lỗi, chỉ log lại
+      }
+    }
     
     return { success, skipped, errors };
+  }
+
+  async updateBinStats(bins) {
+    if (!bins || bins.length === 0) return;
+    const placeholders = bins.map(() => "?").join(",");
+    
+    // Upsert (Insert or Replace) stats for specific BINs
+    const sql = `
+      INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards, updated_at)
+      SELECT 
+        c.Bin,
+        COALESCE(b.Brand,'UNKNOWN'),
+        COALESCE(b.Type,'UNKNOWN'),
+        COALESCE(b.Category,'UNKNOWN'),
+        COALESCE(b.isoCode2,'XX'),
+        COALESCE(b.Issuer,'UNKNOWN'),
+        b.CountryName,
+        COUNT(*) as total_cards,
+        SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards,
+        SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards,
+        SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards,
+        SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards,
+        strftime('%s','now')
+      FROM cdata c 
+      LEFT JOIN BIN_Data b ON c.Bin = b.BIN 
+      WHERE c.Bin IN (${placeholders})
+      GROUP BY c.Bin
+      ON CONFLICT(Bin) DO UPDATE SET
+        total_cards = excluded.total_cards,
+        live_cards = excluded.live_cards,
+        ct_cards = excluded.ct_cards,
+        die_cards = excluded.die_cards,
+        unknown_cards = excluded.unknown_cards,
+        updated_at = excluded.updated_at
+    `;
+    
+    // Split into chunks if too many BINs (D1 limits query params)
+    const CHUNK_SIZE = 50; 
+    for (let i = 0; i < bins.length; i += CHUNK_SIZE) {
+      const chunk = bins.slice(i, i + CHUNK_SIZE);
+      const chunkPlaceholders = chunk.map(() => "?").join(",");
+      const chunkSql = sql.replace(`IN (${placeholders})`, `IN (${chunkPlaceholders})`);
+      await this.db.prepare(chunkSql).bind(...chunk).run();
+    }
   }
 
   async buildBinCardStats() {
