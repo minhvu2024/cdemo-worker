@@ -125,7 +125,7 @@ body{padding-top:60px}
 <div class="glass rounded-2xl p-4">
 <div class="flex justify-between items-center mb-4">
 <h2 class="text-2xl font-bold">Dashboard</h2>
-<button id="updateDataBtn" class="btn glass px-6 py-3 rounded-xl hover-lift text-[#4A8BFF] font-semibold"><i class="fas fa-database mr-2"></i>Update Data</button>
+<button id="updateDataBtn" class="btn glass px-8 py-3 rounded-xl hover-lift text-[#4A8BFF] font-semibold"><i class="fas fa-database mr-2"></i>Update Data</button>
 </div>
 <div id="dashContent">
 <div class="text-center py-8"><div class="loading inline-block"></div></div>
@@ -484,7 +484,7 @@ Normalize Cards
 <textarea id="normalizeInput" rows="6" class="w-full glass rounded-lg px-3 py-2 text-sm font-mono scrollbar resize-none mb-2 keep-scroll-start" placeholder="Paste cards here (any format)..."></textarea>
 <div class="flex items-center justify-between mb-2">
 <div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="normalizeCount">0</b></div>
-<button id="normalizeBtn" class="px-4 py-2 btn-primary rounded-lg font-semibold hover-lift text-sm">
+<button id="normalizeBtn" class="px-8 py-3 btn-primary rounded-xl font-bold hover-lift text-sm">
 <i class="fas fa-magic mr-1"></i>Normalize
 </button>
 </div>
@@ -565,10 +565,10 @@ Import to Database
 <div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="importCount">0</b></div>
 <div class="flex gap-2">
 <input type="file" id="importFileInput" accept=".txt" class="hidden">
-<button id="importFileBtn" class="px-6 py-2.5 glass rounded-xl font-bold hover-lift text-sm">
+<button id="importFileBtn" class="px-8 py-3 glass rounded-xl font-bold hover-lift text-sm">
 <i class="fas fa-file-upload mr-1"></i>file.txt
 </button>
-<button id="importBtn" class="px-6 py-2.5 btn-primary rounded-xl font-bold hover-lift text-sm">
+<button id="importBtn" class="px-8 py-3 btn-primary rounded-xl font-bold hover-lift text-sm">
 <i class="fas fa-upload mr-1"></i>Import
 </button>
 </div>

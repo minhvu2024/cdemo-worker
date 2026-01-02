@@ -309,11 +309,11 @@ export class DatabaseService {
 
   async getFilters() {
     const [brandsRes, typesRes, categoriesRes, countriesRes, issuersRes] = await Promise.all([
-      this.db.prepare("SELECT DISTINCT Brand as brand FROM BIN_Data WHERE Brand IS NOT NULL ORDER BY brand ASC").all(),
-      this.db.prepare("SELECT DISTINCT Type as type FROM BIN_Data WHERE Type IS NOT NULL ORDER BY type ASC").all(),
-      this.db.prepare("SELECT DISTINCT Category as category FROM BIN_Data ORDER BY category ASC").all(),
-      this.db.prepare("SELECT DISTINCT isoCode2 as country FROM BIN_Data ORDER BY country ASC").all(),
-      this.db.prepare("SELECT DISTINCT Issuer as issuer FROM BIN_Data WHERE Issuer IS NOT NULL ORDER BY issuer ASC LIMIT 200").all()
+      this.db.prepare("SELECT DISTINCT Brand as brand FROM bin_inventory WHERE total_cards > 0 AND Brand IS NOT NULL AND Brand != 'UNKNOWN' ORDER BY brand ASC").all(),
+      this.db.prepare("SELECT DISTINCT Type as type FROM bin_inventory WHERE total_cards > 0 AND Type IS NOT NULL AND Type != 'UNKNOWN' ORDER BY type ASC").all(),
+      this.db.prepare("SELECT DISTINCT Category as category FROM bin_inventory WHERE total_cards > 0 AND Category IS NOT NULL AND Category != 'UNKNOWN' ORDER BY category ASC").all(),
+      this.db.prepare("SELECT DISTINCT isoCode2 as country FROM bin_inventory WHERE total_cards > 0 AND isoCode2 IS NOT NULL AND isoCode2 != 'XX' ORDER BY country ASC").all(),
+      this.db.prepare("SELECT DISTINCT Issuer as issuer FROM bin_inventory WHERE total_cards > 0 AND Issuer IS NOT NULL AND Issuer != 'UNKNOWN' ORDER BY issuer ASC LIMIT 200").all()
     ]);
     return {
       brands: (brandsRes.results || []).map(b => b.brand).filter(Boolean),
