@@ -78,16 +78,29 @@ export class CardUtils {
   }
   static normalizeAll(lines, filterExpired = false) {
     const valid = [], errors = [];
+    const seen = new Set();
+    
     lines.forEach((line, i) => {
       const result = CardUtils.normalize(line, filterExpired);
       if (result?.error) {
         const truncated = line.length > 28 ? line.substring(0, 28) + '..' : line;
         errors.push(`${truncated}\t${result.error}`);
       } else if (result) {
-        valid.push(result);
+        // Check for duplicates
+        if (seen.has(result.normalized)) {
+           // It's a duplicate within this batch
+           // We silently skip it or maybe add to errors if user wants to know?
+           // User request: "loại bỏ 1 dòng bị trùng" -> imply silent deduplication for "Normalize Cards"
+           // For Import, maybe we want to know? But this is CardUtils.
+           // Let's just skip it from valid list.
+           const truncated = line.length > 28 ? line.substring(0, 28) + '..' : line;
+           errors.push(`${truncated}\tDuplicate in input`);
+        } else {
+           seen.add(result.normalized);
+           valid.push(result);
+        }
       }
     });
     return { valid, errors };
   }
 }
-

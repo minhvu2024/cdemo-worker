@@ -95,6 +95,7 @@ class BINLookup{
     
     safe('loginForm', 'submit', (e)=>this.doLogin(e));
 
+    safe('logoutBtn','click',()=>this.logout());
     document.querySelectorAll('.tab-btn').forEach(btn=>{
       btn.addEventListener('click',()=>{
         document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
@@ -473,7 +474,7 @@ if(totalExpectedCards>=2000||isFullExport){
             allDuplicates.push(...d.data.duplicates);
         },
         onComplete: () => {
-             document.getElementById('dupTotal').textContent=lines.length;
+             // document.getElementById('dupTotal').textContent=lines.length; // Removed as per request
              document.getElementById('dupUnique').textContent=allUnique.length;
              document.getElementById('dupDup').textContent=allDuplicates.length;
              document.getElementById('dupOutput').value=allUnique.join(NL);

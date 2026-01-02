@@ -533,7 +533,7 @@ Check Duplicates
 
 <div id="dupResult" class="hidden">
 <div class="flex items-center justify-between mb-2">
-<span class="text-xs text-gray-600">Total: <b class="text-gray-900" id="dupTotal">0</b> | Unique: <b class="text-green-400" id="dupUnique">0</b></span>
+<span class="text-xs text-gray-600">Unique: <b class="text-green-400" id="dupUnique">0</b></span>
 <button id="copyDup" class="px-3 py-1 glass rounded-lg text-xs hover-lift">
 <i class="fas fa-copy mr-1"></i>Copy
 </button>

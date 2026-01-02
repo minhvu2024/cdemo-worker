@@ -53,7 +53,7 @@ export default {
       if (path === "/api/normalize" && request.method === "POST") return router.normalizeCards?.(request) || new Response(JSON.stringify({ success: false, error: "Not found" }), { status: 404 });
       if (path === "/api/check-duplicates" && request.method === "POST") return router.checkDuplicates?.(request) || new Response(JSON.stringify({ success: false, error: "Not found" }), { status: 404 });
       if (path === "/api/import" && request.method === "POST") return router.importCards?.(request) || new Response(JSON.stringify({ success: false, error: "Not found" }), { status: 404 });
-      if (path === "/api/admin/rebuild-stats" && request.method === "POST") return router.rebuildStats(request, env);
+      if (path === "/api/rebuild-stats" && request.method === "POST") return router.rebuildStats(request, env);
       const match = path.match(/^\/api\/bin\/([^\/]+)$/);
       if (match) return router.getBIN(match[1]);
       return new Response(JSON.stringify({ success: false, error: "Not found" }), {
