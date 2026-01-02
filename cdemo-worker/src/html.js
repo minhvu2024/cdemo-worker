@@ -210,12 +210,12 @@ body{padding-top:60px}
 <table class="w-full">
 <thead>
 <tr class="border-b border-gray-300">
-<th class="px-6 py-4 text-left"><i class="fas fa-hashtag mr-2 text-[#4A8BFF]"></i>BIN</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-credit-card mr-2 text-[#4A8BFF]"></i>Brand</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-tag mr-2 text-[#4A8BFF]"></i>Type</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-layer-group mr-2 text-[#4A8BFF]"></i>Category</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-building mr-2 text-[#4A8BFF]"></i>Issuer</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-flag mr-2 text-[#4A8BFF]"></i>Country</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('search','bin')"><i class="fas fa-hashtag mr-2 text-[#4A8BFF]"></i>BIN</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('search','brand')"><i class="fas fa-credit-card mr-2 text-[#4A8BFF]"></i>Brand</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('search','type')"><i class="fas fa-tag mr-2 text-[#4A8BFF]"></i>Type</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('search','category')"><i class="fas fa-layer-group mr-2 text-[#4A8BFF]"></i>Category</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('search','issuer')"><i class="fas fa-building mr-2 text-[#4A8BFF]"></i>Issuer</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('search','country')"><i class="fas fa-flag mr-2 text-[#4A8BFF]"></i>Country</th>
 </tr>
 </thead>
 <tbody id="resultsBody"></tbody>
@@ -362,13 +362,13 @@ Total Cards: <span id="totalCardsCount" class="text-[#4A8BFF] font-bold">0</span
 <table class="w-full">
 <thead>
 <tr class="border-b border-gray-300">
-<th class="px-6 py-4 text-left">BIN</th>
-<th class="px-6 py-4 text-left">Brand</th>
-<th class="px-6 py-4 text-left">Type</th>
-<th class="px-6 py-4 text-left">Category</th>
-<th class="px-6 py-4 text-left">Country</th>
-<th class="px-6 py-4 text-left">Cards</th>
-<th class="px-6 py-4 text-left">Live Rate</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('export','bin')">BIN</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('export','brand')">Brand</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('export','type')">Type</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('export','category')">Category</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('export','country')">Country</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('export','cardCount')">Cards</th>
+<th class="px-6 py-4 text-left cursor-pointer hover:bg-gray-200 transition-colors" onclick="window.binLookup.sortResults('export','liveRate')">Live Rate</th>
 </tr>
 </thead>
 <tbody id="cardResultsBody"></tbody>
