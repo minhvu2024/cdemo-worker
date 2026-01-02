@@ -137,7 +137,7 @@ body{padding-top:60px}
 
 <!-- Bin Checker Tab -->
 <div id="binchecker" class="tab-content">
-<div class="glass rounded-2xl p-4 mb-4 hover-lift">
+<div class="glass rounded-2xl p-4 mb-4">
 <div class="flex items-center mb-4">
 <div class="p-2 bg-[#4A8BFF] rounded-lg mr-3">
 <i class="fas fa-filter text-white"></i>
@@ -258,7 +258,7 @@ body{padding-top:60px}
 
 <!-- Card Checker Tab (Card Exporter từ V3) -->
 <div id="cardchecker" class="tab-content">
-<div class="glass rounded-2xl p-4 mb-4 hover-lift">
+<div class="glass rounded-2xl p-4 mb-4">
 <div class="flex items-center mb-4">
 <div class="p-2 bg-[#4A8BFF] rounded-lg mr-3">
 <i class="fas fa-filter text-white"></i>
@@ -463,7 +463,7 @@ Speed: <span id="exportSpeed" class="text-indigo-400 font-bold">0</span> cards/s
 
 <!-- Tools Tab (layout giống V2, logic dùng API V3) -->
 <div id="tools" class="tab-content">
-<div class="glass rounded-2xl p-4 mb-4 hover-lift">
+<div class="glass rounded-2xl p-4 mb-4">
 <h2 class="text-2xl font-bold mb-3 flex items-center gap-3">
 <i class="fas fa-tools text-indigo-400"></i>
 Card Tools
@@ -472,7 +472,7 @@ Card Tools
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
 
 <!-- Tool 1: Normalize -->
-<div class="glass rounded-xl p-3 hover-lift">
+<div class="glass rounded-xl p-3">
 <h3 class="text-lg font-bold mb-2 flex items-center gap-2">
 <div class="w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 flex items-center justify-center text-sm font-bold">1</div>
 Normalize Cards
@@ -508,7 +508,7 @@ Normalize Cards
 </div>
 
 <!-- Tool 2: Check Duplicates -->
-<div class="glass rounded-xl p-3 hover-lift">
+<div class="glass rounded-xl p-3">
 <h3 class="text-lg font-bold mb-2 flex items-center gap-2">
 <div class="w-8 h-8 rounded-full bg-[#4A8BFF] flex items-center justify-center text-sm font-bold text-white">2</div>
 Check Duplicates
@@ -554,7 +554,7 @@ Check Duplicates
 </div>
 
 <!-- Tool 3: Import -->
-<div class="glass rounded-xl p-3 hover-lift">
+<div class="glass rounded-xl p-3">
 <h3 class="text-lg font-bold mb-2 flex items-center gap-2">
 <div class="w-8 h-8 rounded-full bg-[#4A8BFF] flex items-center justify-center text-sm font-bold text-white">3</div>
 Import to Database
@@ -631,7 +631,7 @@ getTypeBadgeClass(type){switch(type?.toUpperCase()){case 'CREDIT':return 'badge-
 updatePagination(p){const start=p.offset+1;const end=Math.min(p.offset+p.limit,p.total);document.getElementById('showingCount').textContent=start+'-'+end;document.getElementById('totalCount').textContent=p.total;const totalPages=Math.max(1,Math.ceil(p.total/p.limit));const currentPage=Math.floor(p.offset/p.limit)+1;const container=document.getElementById('pageNumbers');container.innerHTML='';const addBtn=i=>{const btn=document.createElement('button');btn.textContent=String(i);btn.className=(i===currentPage?'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg':'glass text-gray-700')+' px-4 py-2 rounded-lg text-sm font-semibold hover-lift';btn.onclick=()=>{this.currentPage=i-1;this.search()};container.appendChild(btn);};const addEllipsis=()=>{const span=document.createElement('span');span.textContent='...';span.className='px-2 text-gray-600';container.appendChild(span);};const addRange=(s,e)=>{for(let i=s;i<=e;i++)addBtn(i)};if(totalPages<=10){addRange(1,totalPages);}else{addRange(1,Math.min(5,totalPages));if(currentPage>7)addEllipsis();const midStart=Math.max(currentPage-2,6);const midEnd=Math.min(currentPage+2,totalPages-5);if(midStart<=midEnd)addRange(midStart,midEnd);if(currentPage<totalPages-6)addEllipsis();addRange(Math.max(totalPages-4,6),totalPages);}const prevBtn=document.getElementById('prevBtn');const nextBtn=document.getElementById('nextBtn');prevBtn.disabled=currentPage===1;nextBtn.disabled=currentPage===totalPages;prevBtn.classList.toggle('opacity-50',prevBtn.disabled);prevBtn.classList.toggle('cursor-not-allowed',prevBtn.disabled);nextBtn.classList.toggle('opacity-50',nextBtn.disabled);nextBtn.classList.toggle('cursor-not-allowed',nextBtn.disabled);}
 previousPage(){if(this.currentPage>0){this.currentPage--;this.search()}}nextPage(){this.currentPage++;this.search()}jumpToPage(){const val=parseInt(document.getElementById('pageJumpInput').value);if(!isNaN(val)&&val>=1){this.currentPage=val-1;this.search();document.getElementById('pageJumpInput').value='';}}
 clearFilters(){document.getElementById('binInput').value='';document.getElementById('binCounter').textContent='374788';['brandFilter','typeFilter','categoryFilter','countryFilter','issuerFilter'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('limitInput').value='10';this.currentPage=0;this.search();}
-async loadDashboard(force=false){const content=document.getElementById('dashContent');if(!force&&content.innerHTML.includes('grid'))return;content.innerHTML='<div class="text-center py-8"><div class="loading inline-block"></div></div>';try{const r=await fetch('/api/dashboard');const d=await r.json();if(d.success){const s=d.data;const topBrands=s.brands&&s.brands.length>0?s.brands.slice(0,10):[];const topCountries=s.countries&&s.countries.length>0?s.countries.slice(0,10):[];const topTypes=s.types&&s.types.length>0?s.types.slice(0,10):[];const topCategories=s.categories&&s.categories.length>0?s.categories.slice(0,10):[];const topBins=s.topBins&&s.topBins.length>0?s.topBins.slice(0,10):[];content.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4"><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-database text-3xl text-indigo-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.totalRecords.toLocaleString()+'</div><div class="text-sm text-gray-600">Total BINs</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-credit-card text-3xl text-blue-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.totalCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Total Cards</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-check-circle text-3xl text-green-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.liveCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Live Cards</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-times-circle text-3xl text-red-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.dieCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Expired</div></div></div>';}}catch(e){content.innerHTML='<div class="text-center text-red-400">Failed to load dashboard</div>';}}
+async loadDashboard(force=false){const content=document.getElementById('dashContent');if(!force&&content.innerHTML.includes('grid'))return;content.innerHTML='<div class="text-center py-8"><div class="loading inline-block"></div></div>';try{const r=await fetch('/api/dashboard');const d=await r.json();if(d.success){const s=d.data;const topBrands=s.brands&&s.brands.length>0?s.brands.slice(0,10):[];const topCountries=s.countries&&s.countries.length>0?s.countries.slice(0,10):[];const topTypes=s.types&&s.types.length>0?s.types.slice(0,10):[];const topCategories=s.categories&&s.categories.length>0?s.categories.slice(0,10):[];const topBins=s.topBins&&s.topBins.length>0?s.topBins.slice(0,10):[];content.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4"><div class="glass p-4 rounded-xl text-center"><i class="fas fa-database text-3xl text-indigo-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.totalRecords.toLocaleString()+'</div><div class="text-sm text-gray-600">Total BINs</div></div><div class="glass p-4 rounded-xl text-center"><i class="fas fa-credit-card text-3xl text-blue-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.totalCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Total Cards</div></div><div class="glass p-4 rounded-xl text-center"><i class="fas fa-check-circle text-3xl text-green-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.liveCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Live Cards</div></div><div class="glass p-4 rounded-xl text-center"><i class="fas fa-times-circle text-3xl text-red-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.dieCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Expired</div></div></div>';}}catch(e){content.innerHTML='<div class="text-center text-red-400">Failed to load dashboard</div>';}}
 copyBinsList(){try{if(!this.currentResults||this.currentResults.length===0){this.showError('No BINs to copy');return;}const binsList=this.currentResults.map(r=>r.bin).join('\n');navigator.clipboard.writeText(binsList).then(()=>{this.showSuccess('Copied '+this.currentResults.length+' BINs to clipboard');}).catch(()=>{const textarea=document.createElement('textarea');textarea.value=binsList;document.body.appendChild(textarea);textarea.select();document.execCommand('copy');document.body.removeChild(textarea);this.showSuccess('Copied '+this.currentResults.length+' BINs to clipboard');});}catch(e){this.showError('Copy failed')}}
 async searchBinsForExport(){const btn=document.getElementById('searchBinsBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Searching...';try{const status=[];if(document.getElementById('statusUnknown').checked)status.push('unknown');if(document.getElementById('statusLive').checked)status.push('1');if(document.getElementById('statusCT').checked)status.push('2');if(document.getElementById('statusDie').checked)status.push('0');if(status.length===0){this.showError('Please select at least one status');return;}const params={brand:document.getElementById('cardBrandFilter').value||null,type:document.getElementById('cardTypeFilter').value||null,category:document.getElementById('cardCategoryFilter').value||null,country:document.getElementById('cardCountryFilter').value||null,issuer:document.getElementById('cardIssuerFilter').value.trim()||null,minCards:parseInt(document.getElementById('minCardsInput').value)||10,maxBins:parseInt(document.getElementById('maxBinsInput').value)||10000,status};const r=await fetch('/api/search-bins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});const d=await r.json();if(d.success){this.cardExporter.bins=d.bins;this.displayBinResults(d.bins);document.getElementById('cardResultsSection').classList.remove('hidden');document.getElementById('exportOptionsSection').classList.remove('hidden');this.showSuccess('Found '+d.bins.length+' BINs');}else{this.showError(d.error||'Search failed');}}catch(e){this.showError('Search failed: '+e.message);}finally{btn.disabled=false;btn.innerHTML=html;}}
 displayBinResults(bins){const totalCards=bins.reduce((sum,b)=>sum+b.cardCount,0);document.getElementById('foundBinsCount').textContent=bins.length;document.getElementById('totalCardsCount').textContent=totalCards.toLocaleString();const tbody=document.getElementById('cardResultsBody');tbody.innerHTML=bins.map((b,i)=>'<tr class="group hover:bg-gradient-to-r hover:from-indigo-100 hover:to-purple-100 border-b border-gray-300" style="animation:fadeIn .3s ease '+(i*.02)+'s both"><td class="px-6 py-4"><span class="font-mono text-indigo-600 font-bold">'+b.bin+'</span></td><td class="px-6 py-4 text-gray-900">'+b.brand+'</td><td class="px-6 py-4"><span class="badge '+this.getTypeBadgeClass(b.type)+'">'+b.type+'</span></td><td class="px-6 py-4 text-gray-900">'+(b.category||'-')+'</td><td class="px-6 py-4"><span class="font-mono text-gray-900">'+b.country+'</span></td><td class="px-6 py-4"><span class="font-bold text-gray-900">'+b.cardCount.toLocaleString()+'</span></td><td class="px-6 py-4"><div class="flex items-center gap-2"><div class="w-24 h-2 bg-gray-200 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-green-500 to-emerald-500" style="width:'+(b.liveRate*100).toFixed(0)+'%"></div></div><span class="text-sm font-semibold text-gray-900">'+(b.liveRate*100).toFixed(0)+'%</span></div></td></tr>').join('');}
