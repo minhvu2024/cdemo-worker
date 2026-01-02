@@ -7,69 +7,65 @@ export function getHTML() {
 <title>BIN Database System</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
-<script src="/app2.js?v=4" defer></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="/app2.js?v=5" defer></script>
 <style>
 html{overflow-y:scroll}
-*{transition:all .2s ease}
-body{background:linear-gradient(135deg,#f0f4f8,#e2e8f0);min-height:100vh;color:#1e293b;padding-top:70px}
-.glass{background:rgba(255,255,255,.8);backdrop-filter:blur(16px);border:1px solid rgba(148,163,184,.2);box-shadow:0 8px 32px rgba(0,0,0,.1)}
-.glass:hover{background:rgba(255,255,255,.95);border-color:rgba(148,163,184,.3)}
-.gradient-text{background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.animated-gradient{background:linear-gradient(270deg,#667eea,#764ba2,#f093fb);background-size:600% 600%;animation:gradient 8s ease infinite}
-@keyframes gradient{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
-.hover-lift{transition:transform .3s,box-shadow .3s}
-.hover-lift:hover{transform:translateY(-4px);box-shadow:0 20px 40px rgba(0,0,0,.4)}
-.skeleton{background:linear-gradient(90deg,#e2e8f0 25%,#cbd5e1 50%,#e2e8f0 75%);background-size:200% 100%;animation:loading 1.5s infinite}
+*{transition:all .2s ease;font-family:'Inter',sans-serif}
+body{background:#F8F9FA;min-height:100vh;color:#1A1A1A;padding-top:70px}
+.glass{background:#FFFFFF;border:1px solid #E5E7EB;box-shadow:0 1px 3px 0 rgba(0,0,0,0.1),0 1px 2px 0 rgba(0,0,0,0.06)}
+.glass:hover{border-color:#4A8BFF;box-shadow:0 4px 6px -1px rgba(74,139,255,0.1),0 2px 4px -1px rgba(74,139,255,0.06)}
+.gradient-text{color:#4A8BFF}
+.hover-lift{transition:transform .2s,box-shadow .2s}
+.hover-lift:hover{transform:translateY(-2px);box-shadow:0 10px 15px -3px rgba(0,0,0,0.1),0 4px 6px -2px rgba(0,0,0,0.05)}
+.skeleton{background:linear-gradient(90deg,#F3F4F6 25%,#E5E7EB 50%,#F3F4F6 75%);background-size:200% 100%;animation:loading 1.5s infinite}
 @keyframes loading{to{background-position:-200% 0}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
 .pulse{animation:pulse 2s infinite}
-@keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-.fade-in{animation:fadeIn .5s}
-.input-glow:focus{box-shadow:0 0 0 3px rgba(99,102,241,.3)}
-.btn-primary{background:linear-gradient(135deg,#667eea,#764ba2);position:relative;overflow:hidden}
-.btn-primary::before{content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent);transition:left .5s}
-.btn-primary:hover::before{left:100%}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeIn .4s ease-out}
+.input-glow:focus{box-shadow:0 0 0 3px rgba(74,139,255,0.15)}
+.btn-primary{background:#4A8BFF;color:#FFFFFF;position:relative;overflow:hidden;transition:background .2s}
+.btn-primary:hover{background:#3A7BEE}
 .badge{display:inline-flex;align-items:center;gap:.25rem;padding:.375rem .75rem;border-radius:9999px;font-size:.75rem;font-weight:600;text-transform:uppercase}
-.badge-credit{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;box-shadow:0 4px 6px rgba(59,130,246,.3)}
-.badge-debit{background:linear-gradient(135deg,#10b981,#059669);color:#fff;box-shadow:0 4px 6px rgba(16,185,129,.3)}
-.badge-prepaid{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;box-shadow:0 4px 6px rgba(245,158,11,.3)}
-.badge-default{background:linear-gradient(135deg,#6b7280,#4b5563);color:#fff}
+.badge-credit{background:rgba(74,139,255,0.1);color:#4A8BFF;border:1px solid rgba(74,139,255,0.2)}
+.badge-debit{background:rgba(16,185,129,0.1);color:#10B981;border:1px solid rgba(16,185,129,0.2)}
+.badge-prepaid{background:rgba(245,158,11,0.1);color:#F59E0B;border:1px solid rgba(245,158,11,0.2)}
+.badge-default{background:rgba(107,114,128,0.1);color:#6B7280;border:1px solid rgba(107,114,128,0.2)}
 tbody tr{transition:all .2s}
-tbody tr:hover{background:linear-gradient(90deg,rgba(102,126,234,.08),rgba(139,92,246,.08));transform:scale(1.01)}
+tbody tr:hover{background:rgba(74,139,255,0.02)}
 .scrollbar::-webkit-scrollbar{width:8px;height:8px}
-.scrollbar::-webkit-scrollbar-track{background:rgba(241,245,249,.5);border-radius:4px}
-.scrollbar::-webkit-scrollbar-thumb{background:rgba(148,163,184,.4);border-radius:4px}
-.scrollbar::-webkit-scrollbar-thumb:hover{background:rgba(148,163,184,.6)}
-.loading{border:3px solid rgba(148,163,184,.2);border-top-color:#667eea;border-radius:50%;width:24px;height:24px;animation:spin .8s linear infinite}
+.scrollbar::-webkit-scrollbar-track{background:transparent}
+.scrollbar::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px}
+.scrollbar::-webkit-scrollbar-thumb:hover{background:#9CA3AF}
+.loading{border:3px solid rgba(229,231,235,0.5);border-top-color:#4A8BFF;border-radius:50%;width:24px;height:24px;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.sticky-nav{position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(255,255,255,.95);backdrop-filter:blur(20px);border-bottom:1px solid rgba(148,163,184,.2);box-shadow:0 4px 24px rgba(0,0,0,.1)}
+.sticky-nav{position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(255,255,255,0.95);backdrop-filter:blur(12px);border-bottom:1px solid #E5E7EB}
 .nav-tabs{display:flex;align-items:center;gap:.5rem;padding:.75rem 1rem;overflow-x:auto}
 .nav-tabs::-webkit-scrollbar{display:none}
-.tab-btn{padding:.625rem 1.5rem;border-radius:.75rem;font-weight:600;font-size:.95rem;cursor:pointer;background:rgba(248,250,252,.8);border:1px solid rgba(148,163,184,.2);color:#475569;white-space:nowrap;display:flex;align-items:center;gap:.5rem}
-.tab-btn:hover{background:rgba(241,245,249,.9);border-color:rgba(148,163,184,.3)}
-.tab-btn.active{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-color:transparent;box-shadow:0 4px 16px rgba(102,126,234,.4)}
+.tab-btn{padding:.625rem 1.5rem;border-radius:.75rem;font-weight:600;font-size:.95rem;cursor:pointer;background:transparent;color:#6B6B6B;white-space:nowrap;display:flex;align-items:center;gap:.5rem;transition:all .2s}
+.tab-btn:hover{color:#4A8BFF;background:rgba(74,139,255,0.05)}
+.tab-btn.active{background:#4A8BFF;color:#fff;box-shadow:0 4px 12px rgba(74,139,255,0.25)}
 .tab-btn .icon{font-size:1.1rem}
-.logo-btn{padding:.625rem 1rem;background:linear-gradient(135deg,#667eea,#764ba2);border-radius:.75rem;font-weight:700;border:none;margin-right:.5rem}
-.gen-btn{padding:.625rem 1.5rem;background:rgba(16,185,129,.2);border:1px solid rgba(16,185,129,.5);border-radius:.75rem;font-weight:600;color:#10b981;margin-left:auto}
-.gen-btn:hover{background:rgba(16,185,129,.3);border-color:rgba(16,185,129,.7)}
+.gen-btn{padding:.625rem 1.5rem;background:rgba(74,139,255,0.05);border:1px solid rgba(74,139,255,0.2);border-radius:.75rem;font-weight:600;color:#4A8BFF;margin-left:auto}
+.gen-btn:hover{background:rgba(74,139,255,0.1);border-color:#4A8BFF}
 .tab-content{display:none}
 .tab-content.active{display:block}
-input,textarea,select{background:rgba(255,255,255,.9);border:1px solid rgba(148,163,184,.3);border-radius:.75rem;padding:.75rem 1rem;color:#1e293b;width:100%}
-input:focus,textarea:focus,select:focus{outline:none;border-color:#667eea;box-shadow:0 0 0 3px rgba(102,126,234,.2)}
+input,textarea,select{background:#FFFFFF;border:1px solid #E5E7EB;border-radius:.75rem;padding:.75rem 1rem;color:#1A1A1A;width:100%}
+input:focus,textarea:focus,select:focus{outline:none;border-color:#4A8BFF;box-shadow:0 0 0 3px rgba(74,139,255,0.1)}
 textarea{white-space:nowrap;overflow-x:auto;font-family:monospace}
 textarea.keep-scroll-start{scroll-behavior:auto}
 table{width:100%;border-collapse:collapse}
-th{background:rgba(241,245,249,.8);padding:1rem;text-align:left;font-weight:600;color:#475569}
-td{padding:1rem;border-bottom:1px solid rgba(148,163,184,.2);color:#334155}
-.progress-bar{width:100%;height:4px;background:rgba(148,163,184,.2);border-radius:2px;overflow:hidden;margin:8px 0}
-.progress-fill{height:100%;background:linear-gradient(90deg,#667eea,#764ba2);transition:width .3s}
+th{background:#F9FAFB;padding:1rem;text-left;font-weight:600;color:#6B6B6B;border-bottom:1px solid #E5E7EB}
+td{padding:1rem;border-bottom:1px solid #E5E7EB;color:#2D2D2D}
+.progress-bar{width:100%;height:6px;background:#E5E7EB;border-radius:3px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;background:#4A8BFF;transition:width .3s}
 @media (max-width:768px){
 body{padding-top:60px}
 .nav-tabs{padding:.5rem}
 .tab-btn{padding:.5rem 1rem;font-size:.875rem}
 .tab-btn .text{display:none}
 .tab-btn .icon{font-size:1.25rem}
-.logo-btn{padding:.5rem .75rem}
 .gen-btn{padding:.5rem 1rem;font-size:.875rem}
 }
 </style>
@@ -115,7 +111,7 @@ body{padding-top:60px}
 <div id="binchecker" class="tab-content">
 <div class="glass rounded-2xl p-4 mb-4 hover-lift">
 <div class="flex items-center mb-4">
-<div class="p-2 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg mr-3">
+<div class="p-2 bg-[#4A8BFF] rounded-lg mr-3">
 <i class="fas fa-filter text-white"></i>
 </div>
 <h2 class="text-xl font-bold">Search Filters</h2>
@@ -123,49 +119,49 @@ body{padding-top:60px}
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 <div class="md:col-span-2 lg:col-span-4">
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2 flex justify-between">
-<span><i class="fas fa-hashtag mr-1 text-indigo-400"></i>BIN Numbers</span>
-<span id="binCounter" class="px-3 py-1 bg-indigo-600 rounded-full text-white text-xs">374788</span>
+<span><i class="fas fa-hashtag mr-1 text-[#4A8BFF]"></i>BIN Numbers</span>
+<span id="binCounter" class="px-3 py-1 bg-[#4A8BFF] rounded-full text-white text-xs">374788</span>
 </label>
 <textarea id="binInput" rows="4" class="w-full glass rounded-xl px-4 py-3 text-gray-900 font-mono focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 resize-none input-glow scrollbar" placeholder="Enter BIN numbers (comma or newline separated)"></textarea>
 </div>
 <div class="relative">
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-credit-card mr-1 text-indigo-400"></i>Brand
+<i class="fas fa-credit-card mr-1 text-[#4A8BFF]"></i>Brand
 </label>
 <input id="brandFilter" list="brands-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
 <datalist id="brands-list"></datalist>
 </div>
 <div class="relative">
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-tag mr-1 text-blue-400"></i>Type
+<i class="fas fa-tag mr-1 text-[#4A8BFF]"></i>Type
 </label>
 <input id="typeFilter" list="types-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
 <datalist id="types-list"></datalist>
 </div>
 <div class="relative">
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-layer-group mr-1 text-purple-400"></i>Category
+<i class="fas fa-layer-group mr-1 text-[#4A8BFF]"></i>Category
 </label>
 <input id="categoryFilter" list="categories-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
 <datalist id="categories-list"></datalist>
 </div>
 <div class="relative">
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-globe mr-1 text-green-400"></i>Country
+<i class="fas fa-globe mr-1 text-[#4A8BFF]"></i>Country
 </label>
 <input id="countryFilter" list="countries-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
 <datalist id="countries-list"></datalist>
 </div>
 <div class="md:col-span-2">
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-building mr-1 text-yellow-400"></i>Issuer
+<i class="fas fa-building mr-1 text-[#4A8BFF]"></i>Issuer
 </label>
 <input id="issuerFilter" list="issuers-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Search..."/>
 <datalist id="issuers-list"></datalist>
 </div>
 <div>
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-list-ol mr-1 text-cyan-400"></i>Limit
+<i class="fas fa-list-ol mr-1 text-[#4A8BFF]"></i>Limit
 </label>
 <input type="number" id="limitInput" value="10" min="1" max="1000" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
 </div>
@@ -183,7 +179,7 @@ body{padding-top:60px}
 <div class="glass rounded-2xl p-4">
 <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
 <div class="flex items-center gap-3">
-<div class="p-2 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg">
+<div class="p-2 bg-[#4A8BFF] rounded-lg">
 <i class="fas fa-table text-white"></i>
 </div>
 <h2 class="text-xl font-bold">Results</h2>
@@ -194,8 +190,8 @@ body{padding-top:60px}
 <div class="flex items-center gap-3 flex-wrap">
 <div class="text-sm text-gray-600 glass px-4 py-2 rounded-lg">
 <i class="fas fa-list mr-2"></i>
-<span id="showingCount" class="font-semibold text-indigo-400">0-0</span> of 
-<span id="totalCount" class="font-semibold text-indigo-400">0</span>
+<span id="showingCount" class="font-semibold text-[#4A8BFF]">0-0</span> of 
+<span id="totalCount" class="font-semibold text-[#4A8BFF]">0</span>
 </div>
 <div class="flex items-center gap-2">
 <button id="prevBtn" class="glass px-4 py-2 rounded-lg hover-lift" disabled>
@@ -214,12 +210,12 @@ body{padding-top:60px}
 <table class="w-full">
 <thead>
 <tr class="border-b border-gray-300">
-<th class="px-6 py-4 text-left"><i class="fas fa-hashtag mr-2 text-indigo-400"></i>BIN</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-credit-card mr-2 text-blue-400"></i>Brand</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-tag mr-2 text-purple-400"></i>Type</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-layer-group mr-2 text-cyan-400"></i>Category</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-building mr-2 text-yellow-400"></i>Issuer</th>
-<th class="px-6 py-4 text-left"><i class="fas fa-flag mr-2 text-green-400"></i>Country</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-hashtag mr-2 text-[#4A8BFF]"></i>BIN</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-credit-card mr-2 text-[#4A8BFF]"></i>Brand</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-tag mr-2 text-[#4A8BFF]"></i>Type</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-layer-group mr-2 text-[#4A8BFF]"></i>Category</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-building mr-2 text-[#4A8BFF]"></i>Issuer</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-flag mr-2 text-[#4A8BFF]"></i>Country</th>
 </tr>
 </thead>
 <tbody id="resultsBody"></tbody>
@@ -236,7 +232,7 @@ body{padding-top:60px}
 <div id="cardchecker" class="tab-content">
 <div class="glass rounded-2xl p-4 mb-4 hover-lift">
 <div class="flex items-center mb-4">
-<div class="p-2 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-lg mr-3">
+<div class="p-2 bg-[#4A8BFF] rounded-lg mr-3">
 <i class="fas fa-filter text-white"></i>
 </div>
 <h2 class="text-xl font-bold">Card Exporter</h2>
@@ -286,7 +282,7 @@ body{padding-top:60px}
 
 <div class="mb-4">
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-list mr-1 text-indigo-400"></i>BIN List
+<i class="fas fa-list mr-1 text-[#4A8BFF]"></i>BIN List
 </label>
 <textarea id="cardBinsInput" rows="4" class="w-full glass rounded-xl px-4 py-3 text-gray-900 font-mono text-sm scrollbar" placeholder="Paste BINs, one per line or comma-separated..."></textarea>
 <p class="text-xs text-gray-600 mt-1">Ưu tiên lọc theo danh sách BIN nếu có</p>
@@ -294,28 +290,28 @@ body{padding-top:60px}
 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 <div>
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-sort-numeric-up mr-1 text-cyan-400"></i>Min Cards per BIN
+<i class="fas fa-sort-numeric-up mr-1 text-[#4A8BFF]"></i>Min Cards per BIN
 </label>
 <input type="number" id="minCardsInput" value="10" min="1" max="10000" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
 <p class="text-xs text-gray-600 mt-1">Only BINs with ≥ this many cards</p>
 </div>
 <div>
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-list-ol mr-1 text-pink-400"></i>Cards per BIN
+<i class="fas fa-list-ol mr-1 text-[#4A8BFF]"></i>Cards per BIN
 </label>
 <input type="number" id="cardsPerBinInput" value="50" min="1" max="100" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
 <p class="text-xs text-gray-600 mt-1">Max: 100 cards/BIN</p>
 </div>
 <div>
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-hashtag mr-1 text-orange-400"></i>Max BINs
+<i class="fas fa-hashtag mr-1 text-[#4A8BFF]"></i>Max BINs
 </label>
 <input type="number" id="maxBinsInput" value="10000" min="1" max="100000" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
 <p class="text-xs text-gray-600 mt-1">Max: 100,000 BINs (no limit recommended)</p>
 </div>
 <div>
 <label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
-<i class="fas fa-check-circle mr-1 text-green-400"></i>Status Filter
+<i class="fas fa-check-circle mr-1 text-[#4A8BFF]"></i>Status Filter
 </label>
 <div class="space-y-2 mt-3">
 <label class="flex items-center gap-2 cursor-pointer">
@@ -353,8 +349,8 @@ body{padding-top:60px}
 <div>
 <h3 class="text-xl font-bold mb-2">Results Preview</h3>
 <p class="text-gray-600">
-Found: <span id="foundBinsCount" class="text-indigo-400 font-bold">0</span> BINs | 
-Total Cards: <span id="totalCardsCount" class="text-indigo-400 font-bold">0</span>
+Found: <span id="foundBinsCount" class="text-[#4A8BFF] font-bold">0</span> BINs | 
+Total Cards: <span id="totalCardsCount" class="text-[#4A8BFF] font-bold">0</span>
 </p>
 </div>
 <button id="exportAllBtn" class="px-8 py-3 btn-primary rounded-xl font-semibold hover-lift">
@@ -486,7 +482,7 @@ Normalize Cards
 <!-- Tool 2: Check Duplicates -->
 <div class="glass rounded-xl p-3 hover-lift">
 <h3 class="text-lg font-bold mb-2 flex items-center gap-2">
-<div class="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center text-sm font-bold">2</div>
+<div class="w-8 h-8 rounded-full bg-[#4A8BFF] flex items-center justify-center text-sm font-bold text-white">2</div>
 Check Duplicates
 </h3>
 
@@ -532,7 +528,7 @@ Check Duplicates
 <!-- Tool 3: Import -->
 <div class="glass rounded-xl p-3 hover-lift">
 <h3 class="text-lg font-bold mb-2 flex items-center gap-2">
-<div class="w-8 h-8 rounded-full bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center text-sm font-bold">3</div>
+<div class="w-8 h-8 rounded-full bg-[#4A8BFF] flex items-center justify-center text-sm font-bold text-white">3</div>
 Import to Database
 </h3>
 
