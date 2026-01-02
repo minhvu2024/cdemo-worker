@@ -48,7 +48,7 @@ export default {
         }
       }
       if (path === "/app.js") return new Response(getAppJs(), { headers: { "Content-Type": "application/javascript" } });
-      if (path === "/app2.js") return new Response(getApp2Js(), { headers: { "Content-Type": "application/javascript", "Cache-Control": "public, max-age=31536000, immutable" } });
+      if (path === "/app2.js") return new Response(getApp2Js(), { headers: { "Content-Type": "application/javascript", "Cache-Control": "no-store, no-cache, must-revalidate" } });
       if (path === "/api/bin") return router.search(request);
       if (path === "/api/bin/export") return router.export(request);
       if (path === "/api/stats") return router.stats();
