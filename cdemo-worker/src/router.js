@@ -297,11 +297,11 @@ export class Router {
   }
   async filters() {
     try {
-      const cached = await this.cache.get("filters", {});
+      const cached = await this.cache.get("filters_v2", {});
       if (cached) return this.json(cached);
       const data = await this.db.getFilters();
       const response = { success: true, data };
-      await this.cache.set("filters", {}, response, CACHE_TTL.FILTERS);
+      await this.cache.set("filters_v2", {}, response, CACHE_TTL.FILTERS);
       return this.json(response);
     } catch (error) {
       console.error("Filters error:", error);
