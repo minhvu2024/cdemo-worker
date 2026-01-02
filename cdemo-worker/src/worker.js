@@ -38,12 +38,12 @@ export default {
           return new Response(html, { headers: { 
             "Content-Type": "text/html", 
             "Cache-Control": "no-store, no-cache, must-revalidate", 
-            "Link": "</app2.js?v=6>; rel=preload; as=script, <https://cdn.tailwindcss.com>; rel=preconnect, <https://cdnjs.cloudflare.com>; rel=preconnect, <https://fonts.googleapis.com>; rel=preconnect" 
+            "Link": "</app2.js?v=7>; rel=preload; as=script, <https://cdn.tailwindcss.com>; rel=preconnect, <https://cdnjs.cloudflare.com>; rel=preconnect, <https://fonts.googleapis.com>; rel=preconnect" 
           } });
         } catch {
           return new Response(getHTML(), { headers: { 
             "Content-Type": "text/html", 
-            "Link": "</app2.js?v=6>; rel=preload; as=script, <https://cdn.tailwindcss.com>; rel=preconnect, <https://cdnjs.cloudflare.com>; rel=preconnect, <https://fonts.googleapis.com>; rel=preconnect" 
+            "Link": "</app2.js?v=7>; rel=preload; as=script, <https://cdn.tailwindcss.com>; rel=preconnect, <https://cdnjs.cloudflare.com>; rel=preconnect, <https://fonts.googleapis.com>; rel=preconnect" 
           } });
         }
       }

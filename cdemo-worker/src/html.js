@@ -9,13 +9,15 @@ export function getHTML() {
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="/app2.js?v=6" defer></script>
+<script src="/app2.js?v=7" defer></script>
 <style>
 html{overflow-y:scroll}
 *{transition:all .2s ease;font-family:'Inter',sans-serif}
 body{background:#F8F9FA;min-height:100vh;color:#1A1A1A;padding-top:70px}
 .glass{background:#FFFFFF;border:1px solid #E5E7EB;box-shadow:0 1px 3px 0 rgba(0,0,0,0.1),0 1px 2px 0 rgba(0,0,0,0.06)}
 .glass:hover{border-color:#4A8BFF;box-shadow:0 4px 6px -1px rgba(74,139,255,0.1),0 2px 4px -1px rgba(74,139,255,0.06)}
+.hover-shadow{transition:box-shadow .2s}
+.hover-shadow:hover{box-shadow:0 4px 12px rgba(74,139,255,0.15);transform:none!important}
 .gradient-text{color:#4A8BFF}
 .hover-lift{transition:transform .2s,box-shadow .2s}
 .hover-lift:hover{transform:translateY(-2px);box-shadow:0 10px 15px -3px rgba(0,0,0,0.1),0 4px 6px -2px rgba(0,0,0,0.05)}
@@ -44,7 +46,7 @@ tbody tr:hover{background:rgba(74,139,255,0.02)}
 .sticky-nav{position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(255,255,255,0.95);backdrop-filter:blur(12px);border-bottom:1px solid #E5E7EB}
 .nav-tabs{display:flex;align-items:center;gap:.5rem;padding:.75rem 1rem;overflow-x:auto}
 .nav-tabs::-webkit-scrollbar{display:none}
-.tab-btn{padding:.5rem .75rem;border-radius:.5rem;font-weight:600;font-size:.95rem;cursor:pointer;background:transparent;color:#6B6B6B;white-space:nowrap;display:flex;align-items:center;gap:.5rem;transition:all .2s}
+.tab-btn{padding:.5rem .75rem;border-radius:.5rem;font-weight:600;font-size:.95rem;cursor:pointer;background:transparent;color:#6B6B6B;white-space:nowrap;display:flex;align-items:center;gap:.5rem;transition:color .2s,background .2s,box-shadow .2s!important}
 .tab-btn:hover{color:#4A8BFF;background:rgba(74,139,255,0.05)}
 .tab-btn.active{background:#4A8BFF;color:#fff;box-shadow:0 4px 12px rgba(74,139,255,0.25)}
 .tab-btn .icon{font-size:1.1rem}
