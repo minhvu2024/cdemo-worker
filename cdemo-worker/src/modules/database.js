@@ -3,25 +3,47 @@ export class DatabaseService {
 
   async ensureIndexes() {
     try {
+      // Chiến lược Index tối ưu cho Read/Write thấp:
+      // 1. Chỉ tạo index thực sự cần thiết cho WHERE và GROUP BY phổ biến.
+      // 2. Tránh quá nhiều index (mỗi index tốn Write khi insert).
+      // 3. Ưu tiên Composite Index (Index gộp) để phục vụ nhiều query cùng lúc.
+      
       await this.db.batch([
+        // --- CDATA (Bảng lớn nhất - Cần tối ưu Write nhất) ---
+        // Phục vụ Export & Check Duplicate & Rebuild
+        // idx_cdata_bin_status: Dùng cho Export (WHERE Bin IN... AND status IN...)
         this.db.prepare("CREATE INDEX IF NOT EXISTS idx_cdata_bin_status ON cdata(Bin, status)"),
+        // idx_cdata_pan: Dùng cho Check Duplicate (WHERE pan IN...)
         this.db.prepare("CREATE INDEX IF NOT EXISTS idx_cdata_pan ON cdata(pan)"),
-        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_cdata_yy_mm ON cdata(yy, mm)"),
+        
+        // Loại bỏ các index thừa để giảm Write khi Import
         this.db.prepare("DROP INDEX IF EXISTS idx_cdata_bin"),
         this.db.prepare("DROP INDEX IF EXISTS idx_cdata_bin_status_pan"),
         this.db.prepare("DROP INDEX IF EXISTS idx_cdata_status_bin"),
-        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_brand"),
-        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_type"),
-        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_category"),
-        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_country"),
-        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_issuer"),
-        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_bin_brand_type"),
-        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bindata_brand_type_cat_country ON BIN_Data(Brand, Type, Category, isoCode2)"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_cdata_yy_mm"), // Ít dùng query theo ngày tháng riêng lẻ
+
+        // --- BIN_Data (Dữ liệu tĩnh - Ưu tiên Read) ---
+        // Phục vụ Filter dropdowns & Search
+        // Thay vì index riêng lẻ, dùng index gộp hoặc index cho cột hay filter nhất
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bindata_brand ON BIN_Data(Brand)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bindata_type ON BIN_Data(Type)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bindata_country ON BIN_Data(isoCode2)"),
+        // Index gộp cũ vẫn giữ nếu cần search phức tạp, nhưng có thể bỏ để tiết kiệm storage
+        // this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bindata_brand_type_cat_country ON BIN_Data(Brand, Type, Category, isoCode2)"),
+        
+        // --- BIN_INVENTORY (Bảng thống kê - Read nhiều cho Dashboard) ---
         this.db.prepare("CREATE TABLE IF NOT EXISTS bin_inventory (Bin TEXT PRIMARY KEY, Brand TEXT NOT NULL DEFAULT 'UNKNOWN', Type TEXT NOT NULL DEFAULT 'UNKNOWN', Category TEXT NOT NULL DEFAULT 'UNKNOWN', isoCode2 TEXT NOT NULL DEFAULT 'XX', Issuer TEXT NOT NULL DEFAULT 'UNKNOWN', CountryName TEXT, total_cards INTEGER NOT NULL DEFAULT 0, live_cards INTEGER NOT NULL DEFAULT 0, ct_cards INTEGER NOT NULL DEFAULT 0, die_cards INTEGER NOT NULL DEFAULT 0, unknown_cards INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')) )"),
-        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_country_brand ON bin_inventory(isoCode2, Brand)"),
-        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_brand_type ON bin_inventory(Brand, Type)"),
-        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_category ON bin_inventory(Category)"),
-        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_total ON bin_inventory(total_cards DESC)")
+        
+        // Index cho Dashboard Stats (GROUP BY Brand, Type, Country...)
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_brand ON bin_inventory(Brand)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_type ON bin_inventory(Type)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_country ON bin_inventory(isoCode2)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_total ON bin_inventory(total_cards DESC)"),
+        
+        // Dọn dẹp index cũ/thừa
+        this.db.prepare("DROP INDEX IF EXISTS idx_bininv_country_brand"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bininv_brand_type"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bininv_category")
       ]);
     } catch (e) {
       console.error("Index creation error:", e);
