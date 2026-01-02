@@ -1,0 +1,222 @@
+📘 ĐẶC TẢ CHI TIẾT DỰ ÁN BIN DATABASE SYSTEM - V10
+📅 Cập nhật: 2025-12-23
+Quan trọng: đây là file không được xóa nội dung, chỉ được phép ghi thêm
+
+═══════════════════════════════════════════════════════════════════════════
+0. NGỮ CẢNH DỰ ÁN & QUY ĐỊNH BẮT BUỘC (PROJECT CONTEXT)
+═══════════════════════════════════════════════════════════════════════════
+- Mục đích file này: Ghi lại toàn bộ kiến trúc, giải pháp (thành công & thất bại) để tránh lặp lại sai lầm trong tương lai.
+- Quy tắc vàng:
+  1. KHÔNG BAO GIỜ dùng Inline Script trong HTML (gây lỗi Parser nghiêm trọng).
+  2. KHÔNG BAO GIỜ dùng regex literal chứa `\n` trong template string (gây SyntaxError).
+  3. KHÔNG BAO GIỜ load toàn bộ 600k thẻ vào trình duyệt cùng lúc (gây Crash).
+  4. LUÔN LUÔN test trên môi trường `cdemo` trước khi deploy sang `bcchecker`.
+  5. LUÔN LUÔN cập nhật file này (`mota_v10.txt`) sau mỗi tính năng mới: Ghi rõ giải pháp kỹ thuật, lý do chọn, và các phương án đã loại bỏ.
+
+═══════════════════════════════════════════════════════════════════════════
+1. TỔNG QUAN DỰ ÁN
+═══════════════════════════════════════════════════════════════════════════
+
+1.1. Mô tả
+Hệ thống quản lý và tra cứu thông tin thẻ tín dụng/ghi nợ, xây dựng trên:
+- Backend: Cloudflare Workers (JavaScript, Edge Runtime)
+- Database: Cloudflare D1 (SQLite)
+- Storage: ~1.2GB
+- API: RESTful JSON
+- Frontend: Single Page Application (SPA) với HTML/CSS/JavaScript (được nhúng trong Worker)
+
+1.2. Mục tiêu
+✅ Quản lý 10 triệu thẻ + 400k BIN toàn cầu
+✅ Tra cứu BIN nhanh (<50ms)
+✅ Export thẻ theo filter động (Hỗ trợ Sequential Export tốc độ cao cho dữ liệu lớn)
+✅ Dashboard real-time (<100ms)
+✅ Import/Check duplicates hiệu quả (<5s cho 10k thẻ)
+
+1.3. Quy mô dữ liệu
+- Thẻ (cards):        10,000,000 rows
+- BIN toàn cầu:       400,000 rows (BIN_Data)
+- BIN có thẻ:         65,648 rows (bin_inventory)
+- Country groups:     ~10,000 rows (country_stats)
+
+═══════════════════════════════════════════════════════════════════════════
+2. TÍNH NĂNG CHI TIẾT & GIAO DIỆN (ĐẦY ĐỦ)
+═══════════════════════════════════════════════════════════════════════════
+
+2.1. DASHBOARD (Tổng quan)
+- Mục đích: Hiển thị thống kê thời gian thực của toàn bộ hệ thống.
+- Giao diện:
+  + Header: Logo, Menu điều hướng (Dashboard, BIN Checker, Card Checker, Tools).
+  + Thẻ thống kê (Cards): Hiển thị tổng số Cards, tổng số BINs, tổng số Countries.
+  + Danh sách Top 10 (Tables):
+    1. Top 10 Brands (Visa, Mastercard...) - Kèm số lượng thẻ.
+    2. Top 10 Countries (US, VN, GB...) - Kèm cờ quốc gia và số lượng.
+    3. Top 10 Types (Credit, Debit...) - Kèm số lượng.
+    4. Top 10 Categories (Classic, Platinum...) - Kèm số lượng.
+    5. Top 10 BINs (Các đầu BIN phổ biến nhất).
+- Kỹ thuật:
+  + Sử dụng bảng `bin_inventory` (pre-aggregated) để query cực nhanh (<50ms).
+  + Không bao giờ query trực tiếp `COUNT(*)` từ bảng `cdata` (10 triệu dòng) mỗi lần load trang.
+
+2.2. BIN CHECKER (Tra cứu & Export)
+- Mục đích: Tìm kiếm BIN, xem thông tin chi tiết và xuất dữ liệu thẻ.
+- Giao diện:
+  + Bộ lọc (Filters): BIN, Brand, Type, Category, Country, Issuer.
+  + Tùy chọn hiển thị: "BIN List" (chỉ hiện BIN) hoặc "Full Details".
+  + Bảng kết quả (Results Table):
+    - Cột: BIN, Brand, Type, Category, Issuer, Country (có cờ), Cards Count, Live Rate.
+    - Pagination: Phân trang 50 dòng/trang.
+  + Chức năng Export (Card Exporter):
+    - Input: "Cards per BIN" (Số lượng thẻ muốn lấy mỗi BIN).
+    - Format Options: Pan Only, Text (pan|mm|yy|cvv), Full Info.
+    - Status Filter: Live, Die, Unknown, CT.
+    - Nút "Export All": Tự động chạy chế độ Sequential Export nếu số lượng lớn.
+
+2.3. CARD CHECKER (Tra cứu thẻ lẻ)
+- Mục đích: Kiểm tra nhanh danh sách BIN hoặc thẻ cụ thể.
+- Giao diện:
+  + Textarea nhập liệu: Cho phép nhập list BIN hoặc list Cards (mỗi dòng 1 cái).
+  + Nút "Check": Gửi request lên server.
+  + Bảng kết quả:
+    - Hiển thị thông tin chi tiết của từng BIN tìm được.
+    - Tổng hợp số lượng thẻ đang có trong DB tương ứng với list BIN đó.
+
+2.4. TOOLS (Công cụ tiện ích)
+- Tab 1: Normalize Cards
+  + Input: Textarea chứa thẻ rác (lẫn lộn text, pipe, space...).
+  + Output: List thẻ sạch format `pan|mm|yy|cvv`.
+  + Tính năng: Filter Expired (Lọc bỏ thẻ hết hạn), Luhn Check (Lọc thẻ sai checksum).
+- Tab 2: Check Duplicates
+  + Input: List thẻ cần check.
+  + Output: Danh sách thẻ "Unique" (chưa có trong DB) và "Duplicate" (đã có).
+  + Kỹ thuật: Dùng Temp Table Strategy check 10k thẻ trong <2s.
+- Tab 3: Import Database
+  + Input: List thẻ sạch format chuẩn.
+  + Action: Insert vào database và cập nhật thống kê.
+  + Output: Số lượng thành công, số lượng lỗi.
+
+═══════════════════════════════════════════════════════════════════════════
+3. CẤU TRÚC DATABASE
+═══════════════════════════════════════════════════════════════════════════
+
+3.1. Tổng số bảng: 4
+
+┌────────────────┬───────────┬─────────────┬──────────────────┐
+│   Tên bảng     │   Rows    │   Storage   │   Mục đích       │
+├────────────────┼───────────┼─────────────┼──────────────────┤
+│ cdata          │ 10,000,000│    ~1 GB    │ Lưu thẻ gốc      │
+│ BIN_Data       │   400,000 │   ~50 MB    │ Metadata BIN     │
+│ bin_inventory  │    65,648 │   ~10 MB    │ Stats pre-agg    │
+│ country_stats  │    ~10,000│    ~2 MB    │ Stats by country │
+└────────────────┴───────────┴─────────────┴──────────────────┘
+
+3.2. Bảng cdata (Card Data)
+CREATE TABLE cdata(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pan TEXT NOT NULL UNIQUE,
+    mm TEXT NOT NULL,
+    yy TEXT NOT NULL,
+    cvv TEXT NOT NULL,
+    Bin TEXT NOT NULL,
+    last4 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unknown',
+    info TEXT NULL,
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+);
+Index: idx_cdata_bin_status, idx_cdata_pan
+
+3.3. Bảng BIN_Data (BIN Metadata)
+CREATE TABLE BIN_Data(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    BIN TEXT NOT NULL UNIQUE,
+    Brand TEXT, Type TEXT, Category TEXT, Issuer TEXT,
+    isoCode2 TEXT, isoCode3 TEXT, CountryName TEXT
+);
+Index: idx_bindata_brand_type_cat_country
+
+3.4. Bảng bin_inventory (BIN Inventory Stats)
+CREATE TABLE bin_inventory (
+    Bin TEXT PRIMARY KEY,
+    Brand TEXT, Type TEXT, Category TEXT, isoCode2 TEXT, Issuer TEXT, CountryName TEXT,
+    total_cards INTEGER DEFAULT 0,
+    live_cards INTEGER DEFAULT 0, ct_cards INTEGER DEFAULT 0, die_cards INTEGER DEFAULT 0, unknown_cards INTEGER DEFAULT 0,
+    updated_at INTEGER
+);
+Index: idx_bininv_country_brand, idx_bininv_total
+
+3.5. Bảng country_stats (Country Statistics)
+CREATE TABLE country_stats (
+    isoCode2 TEXT NOT NULL, Brand TEXT, Type TEXT, Category TEXT, Issuer TEXT,
+    total_cards INTEGER DEFAULT 0,
+    PRIMARY KEY (isoCode2, Brand, Type, Category, Issuer)
+);
+
+═══════════════════════════════════════════════════════════════════════════
+4. LỊCH SỬ CÁC GIẢI PHÁP (THÀNH CÔNG & THẤT BẠI)
+═══════════════════════════════════════════════════════════════════════════
+
+4.1. Vấn đề: Giao diện (UI) bị treo, nút bấm không hoạt động
+❌ GIẢI PHÁP THẤT BẠI: Inline Script trong HTML -> Lỗi Parser `SyntaxError`.
+✅ GIẢI PHÁP THÀNH CÔNG: Tách file `app2.js`, dùng `defer`, dùng hằng `NL='\n'`, bỏ regex literal.
+
+4.2. Vấn đề: Cache JS cũ
+❌ GIẢI PHÁP THẤT BẠI: Chỉ deploy đè file.
+✅ GIẢI PHÁP THÀNH CÔNG: Header `Cache-Control: no-store` + Versioning `app2.js?v=4`.
+
+4.3. Vấn đề: Export số lượng lớn (600k thẻ)
+❌ GIẢI PHÁP THẤT BẠI: Random Order (chậm), Gộp 1 file (Crash Browser).
+✅ GIẢI PHÁP THÀNH CÔNG (SEQUENTIAL EXPORT):
+  - Chế độ >= 2000 thẻ: Dùng `ORDER BY Bin, pan` + `LIMIT/OFFSET`.
+  - Frontend: Loop từng BIN, tải từng file `BIN_xxxx.txt` riêng biệt.
+
+4.4. Vấn đề: Import dữ liệu lớn
+❌ GIẢI PHÁP THẤT BẠI: Insert từng dòng, Transaction lớn (Timeout).
+✅ GIẢI PHÁP THÀNH CÔNG: Batch Insert (12 thẻ/query) + Delta Update Stats (Chỉ update BIN bị đổi).
+
+4.5. Vấn đề: Check Duplicates
+❌ GIẢI PHÁP THẤT BẠI: Query `IN` quá lớn (Lỗi D1 Limit).
+✅ GIẢI PHÁP THÀNH CÔNG: Temp Table Strategy (Tạo bảng tạm -> Join).
+
+4.6. Vấn đề: Normalize Cards
+❌ GIẢI PHÁP THẤT BẠI: Regex server-side (Tốn CPU).
+✅ GIẢI PHÁP THÀNH CÔNG: Client-side logic + Luhn Algorithm check.
+
+═══════════════════════════════════════════════════════════════════════════
+5. LUỒNG DỮ LIỆU & QUY TRÌNH DEPLOY
+═══════════════════════════════════════════════════════════════════════════
+
+5.1. Luồng Export (Mới nhất - V10)
+1. User chọn filters & số lượng thẻ.
+2. Frontend check số lượng:
+   - < 2000: Sample Mode (Gộp 1 file, Random).
+   - >= 2000: Sequential Mode (Tách file theo BIN, Tuần tự).
+3. Frontend gọi API theo batch (10k thẻ/lần).
+4. Backend trả dữ liệu raw.
+5. Frontend gom và kích hoạt tải xuống từng file.
+
+5.2. Quy trình Deploy (Nghiêm ngặt)
+1. Develop & Fix: Code trên local.
+2. Test Deploy: `npx wrangler deploy` -> Đẩy lên `cdemo.cthunter.workers.dev`.
+3. Verify: Kiểm tra kỹ trên `cdemo` (UI, chức năng, Console log).
+4. Prod Deploy: `npx wrangler deploy --name bcchecker` -> Đẩy lên `bcchecker.cthunter.workers.dev` (CHỈ KHI ĐƯỢC PHÊ DUYỆT).
+
+5.3. Bảo mật
+- `ADMIN_TOKEN`: Dùng cho API `rebuild-stats`.
+
+═══════════════════════════════════════════════════════════════════════════
+6. NHẬT KÝ CẬP NHẬT (CHANGELOG) - V10 (2025-12-23)
+═══════════════════════════════════════════════════════════════════════════
+✅ Đã hoàn thành:
+1. Sửa lỗi hiển thị Card Checker (kết quả 0).
+2. Sửa lỗi SyntaxError nghiêm trọng do regex literal trong `app2.js`.
+3. Khôi phục giao diện Dashboard về phong cách `cdemo_v8` theo yêu cầu.
+4. Sửa lỗi hiển thị cột Issuer/Country bị đảo ngược trong Bin Checker.
+5. Tối ưu Export thẻ số lượng lớn (Sequential Export).
+6. Thêm tùy chọn định dạng Export (Export Options: Pan/Text/Full).
+7. Thiết lập quy trình Deploy 2 môi trường (Test/Prod).
+8. Thêm cơ chế versioning script (`?v=4`).
+9. Bổ sung đầy đủ các Tool hỗ trợ: Check Duplicates, Import, Normalize.
+
+═══════════════════════════════════════════════════════════════════════════
+7. KẾT LUẬN
+═══════════════════════════════════════════════════════════════════════════
+Hệ thống V10 đã hoàn thiện và ổn định. File tài liệu này là nguồn sự thật duy nhất (Single Source of Truth) cho kiến trúc và tính năng của dự án.

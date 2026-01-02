@@ -1,0 +1,44 @@
+Vấn đề bạn đang gặp phải rất phổ biến khi chuyển đổi từ môi trường Cloudflare Dashboard (Online Editor) sang Wrangler (Local Development).
+
+Việc các button không phản hồi thường do sự sai lệch giữa môi trường thực thi và cách bạn đóng gói mã nguồn (Build process). Dưới đây là những lưu ý quan trọng để bạn kiểm tra và khắc phục:
+
+1. Sự khác biệt giữa Service Worker và ES Modules
+Đây là nguyên nhân hàng đầu. Cloudflare đang chuyển dịch hoàn toàn sang ES Modules (export default { fetch(...) }).
+
+Vấn đề: Nếu code cũ của bạn dùng chuẩn Service Worker (addEventListener('fetch', ...)), đôi khi Wrangler cấu hình mặc định cho Module sẽ khiến nó không bắt được sự kiện.
+
+Lưu ý: Kiểm tra file wrangler.toml. Nếu bạn dùng ES Modules, hãy đảm bảo code của bạn có cấu trúc:
+
+JavaScript
+
+export default {
+  async fetch(request, env, ctx) {
+    return new Response("Hello World");
+  },
+};
+2. Các biến môi trường (Environment Variables) và Bindings
+Khi chạy trên Dashboard, bạn có thể đã nhập các biến API key, KV Namespace, hay D1 Database trực tiếp trên web.
+
+Vấn đề: Wrangler không tự tải các cấu hình này về máy local trừ khi bạn khai báo chúng.
+
+Cần làm: Kiểm tra file wrangler.toml xem đã có đầy đủ các mục [[kv_namespaces]], [[d1_databases]], hay [vars] chưa.
+
+Mẹo: Thử chạy wrangler dev --remote để kết nối trực tiếp với tài nguyên thật trên Cloudflare xem các button có hoạt động lại không.
+
+3. Vấn đề về Assets và Routing (Vibe Coding/Frontend)
+Nếu ứng dụng của bạn có giao diện (HTML/JS/CSS), có thể đường dẫn (path) đang bị sai khi chạy qua Wrangler.
+
+Static Assets: Nếu bạn dùng wrangler pages hoặc tính năng assets mới của Workers, hãy đảm bảo thư mục build (ví dụ: dist hoặc public) được trỏ đúng trong wrangler.toml.
+
+CORS: Khi chạy local, trình duyệt có thể chặn các yêu cầu từ localhost tới API của Cloudflare nếu bạn chưa cấu hình Headers cho phép.
+
+4. Bundling và Dependencies
+"Vibe coding" thường dựa vào các thư viện bên thứ ba.
+
+Vấn đề: Editor trên web tự động xử lý một số dependency, nhưng Wrangler cần một bước build (thường là dùng esbuild tích hợp sẵn).
+
+Lưu ý: Nếu bạn dùng các thư viện Node.js (như Buffer, process), bạn phải bật flag sau trong wrangler.toml:
+
+Ini, TOML
+
+node_compat = true

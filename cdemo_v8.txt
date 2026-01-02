@@ -1,0 +1,2420 @@
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// Constants
+const MAX_BINS = 100000;
+const MAX_CARDS_PER_BIN = 100;
+const MIN_CARDS_PER_BIN = 1;
+const BINS_PER_BATCH = 10;
+const CACHE_TTL = {
+  STATS: 21600,
+  FILTERS: 21600,
+  DASHBOARD: 3600,
+  CARD_STATS: 300,
+  SEARCH: 300,
+  BIN_DETAIL: 1800
+};
+
+// Database Service
+var DatabaseService = class {
+  static { __name(this, "DatabaseService"); }
+  constructor(db) { this.db = db; }
+  
+  async ensureIndexes() {
+    try {
+      await this.db.batch([
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_cdata_bin_status ON cdata(Bin, status)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_cdata_pan ON cdata(pan)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_cdata_yy_mm ON cdata(yy, mm)"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_cdata_bin"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_cdata_bin_status_pan"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_cdata_status_bin"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_brand"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_type"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_category"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_country"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_issuer"),
+        this.db.prepare("DROP INDEX IF EXISTS idx_bindata_bin_brand_type"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bindata_brand_type_cat_country ON BIN_Data(Brand, Type, Category, isoCode2)"),
+        this.db.prepare("CREATE TABLE IF NOT EXISTS bin_inventory (Bin TEXT PRIMARY KEY, Brand TEXT NOT NULL DEFAULT 'UNKNOWN', Type TEXT NOT NULL DEFAULT 'UNKNOWN', Category TEXT NOT NULL DEFAULT 'UNKNOWN', isoCode2 TEXT NOT NULL DEFAULT 'XX', Issuer TEXT NOT NULL DEFAULT 'UNKNOWN', CountryName TEXT, total_cards INTEGER NOT NULL DEFAULT 0, live_cards INTEGER NOT NULL DEFAULT 0, ct_cards INTEGER NOT NULL DEFAULT 0, die_cards INTEGER NOT NULL DEFAULT 0, unknown_cards INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')) )"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_country_brand ON bin_inventory(isoCode2, Brand)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_brand_type ON bin_inventory(Brand, Type)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_category ON bin_inventory(Category)"),
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_total ON bin_inventory(total_cards DESC)"),
+        this.db.prepare("CREATE TABLE IF NOT EXISTS country_stats (isoCode2 TEXT NOT NULL, Brand TEXT NOT NULL, Type TEXT NOT NULL, Category TEXT NOT NULL, Issuer TEXT NOT NULL, total_cards INTEGER NOT NULL DEFAULT 0, live_cards INTEGER NOT NULL DEFAULT 0, ct_cards INTEGER NOT NULL DEFAULT 0, die_cards INTEGER NOT NULL DEFAULT 0, unknown_cards INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), PRIMARY KEY (isoCode2, Brand, Type, Category, Issuer))")
+      ]);
+    } catch (e) {
+      console.error("Index creation error:", e);
+    }
+  }
+  
+  async getCardStats() {
+    try {
+      const [totals, brandResult, typeResult, categoryResult, countryResult, topBinsResult, statusAgg] = await Promise.all([
+        this.db.prepare(`SELECT SUM(total_cards) as totalCards, COUNT(*) as uniqueBins FROM bin_inventory`).first(),
+        this.db.prepare(`SELECT Brand as brand, SUM(total_cards) as count FROM bin_inventory GROUP BY Brand ORDER BY count DESC LIMIT 10`).all(),
+        this.db.prepare(`SELECT Type as type, SUM(total_cards) as count FROM bin_inventory GROUP BY Type ORDER BY count DESC LIMIT 10`).all(),
+        this.db.prepare(`SELECT Category as category, SUM(total_cards) as count FROM bin_inventory GROUP BY Category ORDER BY count DESC LIMIT 10`).all(),
+        this.db.prepare(`SELECT isoCode2 as country, SUM(total_cards) as count FROM bin_inventory GROUP BY isoCode2 ORDER BY count DESC LIMIT 10`).all(),
+        this.db.prepare(`SELECT Bin, total_cards as count FROM bin_inventory ORDER BY total_cards DESC LIMIT 10`).all(),
+        this.db.prepare(`SELECT SUM(live_cards) as live, SUM(die_cards) as die, SUM(ct_cards) as ct, SUM(unknown_cards) as unknown FROM bin_inventory`).first()
+      ]);
+
+      const byStatus = {
+        live: statusAgg?.live || 0,
+        die: statusAgg?.die || 0,
+        ct: statusAgg?.ct || 0,
+        unknown: statusAgg?.unknown || 0
+      };
+
+      return {
+        totalCards: totals?.totalCards || 0,
+        uniqueBins: totals?.uniqueBins || 0,
+        byStatus,
+        byBrand: (brandResult.results || []).reduce((acc, r) => { acc[r.brand] = r.count; return acc; }, {}),
+        byType: (typeResult.results || []).reduce((acc, r) => { acc[r.type] = r.count; return acc; }, {}),
+        byCategory: (categoryResult.results || []).reduce((acc, r) => { acc[r.category] = r.count; return acc; }, {}),
+        byCountry: (countryResult.results || []).reduce((acc, r) => { acc[r.country] = r.count; return acc; }, {}),
+        topBins: (topBinsResult.results || []).map(r => ({ Bin: r.Bin, count: r.count }))
+      };
+    } catch (error) {
+      console.error("Card stats error:", error);
+      throw error;
+    }
+  }
+  
+  async searchBins(params) {
+    const { brand, type, category, country, issuer, minCards = 10, maxBins = 10000, status = ['unknown', '1', '2'] } = params;
+    const where = ["1=1"];
+    const qp = [];
+    if (brand) { where.push("Brand = ?"); qp.push(brand); }
+    if (type) { where.push("Type = ?"); qp.push(type); }
+    if (category) { where.push("Category = ?"); qp.push(category); }
+    if (country) { where.push("isoCode2 = ?"); qp.push(country); }
+    if (issuer) { where.push("Issuer LIKE ?"); qp.push(`%${issuer}%`); }
+    where.push("total_cards >= ?"); qp.push(minCards);
+    let statusFilterExpr = null;
+    const hasStatus = Array.isArray(status) && status.length > 0;
+    if (hasStatus) {
+      const set = new Set(status);
+      const parts = [];
+      if (set.has('1')) parts.push("live_cards > 0");
+      if (set.has('2')) parts.push("ct_cards > 0");
+      if (set.has('0')) parts.push("die_cards > 0");
+      if (set.has('unknown')) parts.push("unknown_cards > 0");
+      if (parts.length > 0) statusFilterExpr = parts.join(" OR ");
+    }
+    const sql = `
+      SELECT 
+        Bin as bin,
+        Brand as brand,
+        Type as type,
+        Category as category,
+        isoCode2 as country,
+        Issuer as issuer,
+        total_cards as cardCount,
+        live_cards as liveCount
+      FROM bin_inventory
+      WHERE ${where.join(" AND ")}
+      ${statusFilterExpr ? `AND (${statusFilterExpr})` : ''}
+      ORDER BY total_cards DESC
+      LIMIT ?
+    `;
+    qp.push(Math.min(maxBins || MAX_BINS, MAX_BINS));
+    try {
+      const result = await this.db.prepare(sql).bind(...qp).all();
+      const bins = (result.results || []).map(r => ({
+        ...r,
+        liveRate: r.cardCount > 0 ? (r.liveCount / r.cardCount) : 0
+      }));
+      return { bins, total: bins.length };
+    } catch (error) {
+      console.error("Search bins error:", error);
+      throw error;
+    }
+  }
+  
+  async exportCards(params) {
+    const { bins, cardsPerBin = 50, status = ['unknown', '1', '2'], includeInfo = false } = params;
+    
+    if (!bins || bins.length === 0) {
+      return { cards: [], stats: { totalBins: 0, totalCards: 0, byBin: {} } };
+    }
+    
+    const limit = Math.min(cardsPerBin, MAX_CARDS_PER_BIN);
+    const statusPlaceholders = status.map(() => "?").join(",");
+    const binPlaceholders = bins.map(() => "?").join(",");
+    
+    try {
+      const result = await this.db.prepare(`
+        WITH RankedCards AS (
+          SELECT 
+            c.pan, c.mm, c.yy, c.cvv, c.Bin, c.info,
+            ROW_NUMBER() OVER (PARTITION BY c.Bin ORDER BY RANDOM()) as rn
+          FROM cdata c
+          WHERE c.Bin IN (${binPlaceholders})
+            AND c.status IN (${statusPlaceholders})
+        )
+        SELECT pan, mm, yy, cvv, Bin, info
+        FROM RankedCards
+        WHERE rn <= ?
+        ORDER BY Bin, rn
+      `).bind(...bins, ...status, limit).all();
+      
+      const byBin = {};
+      const cards = [];
+      
+      (result.results || []).forEach(c => {
+        if (!byBin[c.Bin]) {
+          byBin[c.Bin] = [];
+          if (cards.length > 0) cards.push(''); // Empty line between BINs
+          cards.push(`# BIN: ${c.Bin}`);
+        }
+        const cardStr = includeInfo 
+          ? `${c.pan}|${c.mm}|${c.yy}|${c.cvv}|${c.info || ''}`
+          : `${c.pan}|${c.mm}|${c.yy}|${c.cvv}`;
+        byBin[c.Bin].push(cardStr);
+        cards.push(cardStr);
+      });
+      
+      return {
+        cards,
+        stats: {
+          totalBins: Object.keys(byBin).length,
+          totalCards: cards.filter(c => c && !c.startsWith('#')).length,
+          byBin: Object.fromEntries(
+            Object.entries(byBin).map(([bin, cards]) => [bin, cards.length])
+          )
+        }
+      };
+    } catch (error) {
+      console.error("Export cards error:", error);
+      throw error;
+    }
+  }
+  
+  async searchBIN(params) {
+    const { bin, brand, type, category, country, issuer, limit = 50, offset = 0 } = params;
+    let whereConditions = [];
+    let queryParams = [];
+    
+    if (bin) {
+      const bins = bin.split(",").map(b => b.trim()).filter(Boolean);
+      whereConditions.push(`BIN IN (${bins.map(() => "?").join(",")})`);
+      queryParams.push(...bins);
+    }
+    if (brand) {
+      const values = brand.split(",").map(v => v.trim()).filter(Boolean);
+      whereConditions.push(values.length > 1 ? `Brand IN (${values.map(() => "?").join(",")})` : "Brand = ?");
+      queryParams.push(...values);
+    }
+    if (type) {
+      const values = type.split(",").map(v => v.trim()).filter(Boolean);
+      whereConditions.push(values.length > 1 ? `Type IN (${values.map(() => "?").join(",")})` : "Type = ?");
+      queryParams.push(...values);
+    }
+    if (category) {
+      const values = category.split(",").map(v => v.trim()).filter(Boolean);
+      whereConditions.push(values.length > 1 ? `Category IN (${values.map(() => "?").join(",")})` : "Category = ?");
+      queryParams.push(...values);
+    }
+    if (country) {
+      const values = country.split(",").map(v => v.trim()).filter(Boolean);
+      whereConditions.push(values.length > 1 ? `isoCode2 IN (${values.map(() => "?").join(",")})` : "isoCode2 = ?");
+      queryParams.push(...values);
+    }
+    if (issuer) {
+      const values = issuer.split(",").map(v => v.trim()).filter(Boolean);
+      whereConditions.push(values.length > 1 ? `Issuer IN (${values.map(() => "?").join(",")})` : "Issuer LIKE ?");
+      queryParams.push(...(values.length > 1 ? values : [`%${values[0]}%`]));
+    }
+    
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
+    const countResult = await this.db.prepare(`SELECT COUNT(*) as total FROM BIN_Data ${whereClause}`).bind(...queryParams).first();
+    const total = countResult?.total || 0;
+    
+    queryParams.push(limit, offset);
+    const dataResult = await this.db.prepare(`
+      SELECT BIN as bin, Brand as brand, Type as type, Category as category, 
+             Issuer as issuer, isoCode2 as country
+      FROM BIN_Data ${whereClause} ORDER BY BIN ASC LIMIT ? OFFSET ?
+    `).bind(...queryParams).all();
+    
+    return { data: dataResult.results || [], total };
+  }
+  
+  async getBINById(bin) {
+    return await this.db.prepare(`
+      SELECT BIN as bin, Brand as brand, Type as type, Category as category,
+             Issuer as issuer, isoCode2 as country
+      FROM BIN_Data WHERE BIN = ? LIMIT 1
+    `).bind(bin).first();
+  }
+  
+  async getStats() {
+    const [totalResult, brandsResult, countriesResult, typesResult, categoriesResult] = await Promise.all([
+      this.db.prepare("SELECT COUNT(*) as total FROM BIN_Data").first(),
+      this.db.prepare("SELECT Brand as brand, COUNT(*) as count FROM BIN_Data GROUP BY Brand ORDER BY count DESC LIMIT 10").all(),
+      this.db.prepare("SELECT isoCode2 as country, COUNT(*) as count FROM BIN_Data GROUP BY isoCode2 ORDER BY count DESC LIMIT 10").all(),
+      this.db.prepare("SELECT Type as type, COUNT(*) as count FROM BIN_Data GROUP BY Type ORDER BY count DESC").all(),
+      this.db.prepare("SELECT Category as category, COUNT(*) as count FROM BIN_Data GROUP BY Category ORDER BY count DESC LIMIT 20").all()
+    ]);
+    
+    return {
+      totalRecords: totalResult?.total || 0,
+      brands: brandsResult.results || [],
+      countries: countriesResult.results || [],
+      types: typesResult.results || [],
+      categories: categoriesResult.results || []
+    };
+  }
+  
+  async getDashboardStats() {
+    const [totals, statusAgg, topBins, brandResult, typeResult, categoryResult, countryResult] = await Promise.all([
+      this.db.prepare(`SELECT SUM(total_cards) as totalCards, COUNT(*) as totalRecords FROM bin_inventory`).first(),
+      this.db.prepare(`SELECT SUM(live_cards) as live, SUM(die_cards) as die FROM bin_inventory`).first(),
+      this.db.prepare(`SELECT Bin, total_cards as count FROM bin_inventory ORDER BY total_cards DESC LIMIT 10`).all(),
+      this.db.prepare(`SELECT Brand as brand, SUM(total_cards) as count FROM bin_inventory GROUP BY Brand ORDER BY count DESC LIMIT 10`).all(),
+      this.db.prepare(`SELECT Type as type, SUM(total_cards) as count FROM bin_inventory GROUP BY Type ORDER BY count DESC LIMIT 10`).all(),
+      this.db.prepare(`SELECT Category as category, SUM(total_cards) as count FROM bin_inventory GROUP BY Category ORDER BY count DESC LIMIT 10`).all(),
+      this.db.prepare(`SELECT isoCode2 as country, SUM(total_cards) as count FROM bin_inventory GROUP BY isoCode2 ORDER BY count DESC LIMIT 10`).all()
+    ]);
+    return {
+      totalCards: totals?.totalCards || 0,
+      totalRecords: totals?.totalRecords || 0,
+      liveCards: statusAgg?.live || 0,
+      dieCards: statusAgg?.die || 0,
+      topBins: topBins.results || [],
+      brands: brandResult.results || [],
+      types: typeResult.results || [],
+      categories: categoryResult.results || [],
+      countries: countryResult.results || []
+    };
+  }
+  
+  async getFilters() {
+    const [brandsRes, typesRes, categoriesRes, countriesRes, issuersRes] = await Promise.all([
+      this.db.prepare("SELECT DISTINCT Brand as brand FROM BIN_Data WHERE Brand IS NOT NULL ORDER BY brand ASC").all(),
+      this.db.prepare("SELECT DISTINCT Type as type FROM BIN_Data WHERE Type IS NOT NULL ORDER BY type ASC").all(),
+      this.db.prepare("SELECT DISTINCT Category as category FROM BIN_Data ORDER BY category ASC").all(),
+      this.db.prepare("SELECT DISTINCT isoCode2 as country FROM BIN_Data ORDER BY country ASC").all(),
+      this.db.prepare("SELECT DISTINCT Issuer as issuer FROM BIN_Data WHERE Issuer IS NOT NULL ORDER BY issuer ASC LIMIT 200").all()
+    ]);
+    
+    return {
+      brands: (brandsRes.results || []).map(b => b.brand).filter(Boolean),
+      types: (typesRes.results || []).map(t => t.type).filter(Boolean),
+      categories: (categoriesRes.results || []).map(c => c.category || "").filter(Boolean),
+      countries: (countriesRes.results || []).map(c => c.country || "").filter(Boolean),
+      issuers: (issuersRes.results || []).map(i => i.issuer).filter(Boolean)
+    };
+  }
+  
+  async checkDuplicates(pans) {
+    const duplicates = new Set();
+    const uniquePans = [...new Set(pans)];
+    if (uniquePans.length === 0) return duplicates;
+    try {
+      // Use temp table strategy for better performance
+      await this.db.batch([
+        this.db.prepare(`DROP TABLE IF EXISTS tmp_pans`),
+        this.db.prepare(`CREATE TEMP TABLE tmp_pans (pan TEXT PRIMARY KEY)`)
+      ]);
+      
+      // Insert in batches using multi-value INSERT (max 100 values per query)
+      // D1 limit: 100 parameters per query, so max 100 values in INSERT VALUES
+      const MAX_VALUES_PER_INSERT = 100;
+      for (let i = 0; i < uniquePans.length; i += MAX_VALUES_PER_INSERT) {
+        const chunk = uniquePans.slice(i, i + MAX_VALUES_PER_INSERT);
+        const placeholders = chunk.map(() => "(?)").join(",");
+        const values = chunk;
+        await this.db.prepare(`INSERT OR IGNORE INTO tmp_pans (pan) VALUES ${placeholders}`).bind(...values).run();
+      }
+      
+      // Single JOIN query to find duplicates
+      const result = await this.db.prepare(`SELECT c.pan FROM cdata c INNER JOIN tmp_pans t ON c.pan = t.pan`).all();
+      (result.results || []).forEach(r => duplicates.add(r.pan));
+      
+      // Cleanup
+      await this.db.prepare(`DROP TABLE IF EXISTS tmp_pans`).run();
+    } catch (error) {
+      console.error("Check duplicates temp table error:", error);
+      // Fallback: Use IN clause with smaller chunks (D1 limit 100 parameters per query)
+      const CHUNK_SIZE = 100; // D1 limit is 100 parameters per query
+      const queries = [];
+      for (let i = 0; i < uniquePans.length; i += CHUNK_SIZE) {
+        const chunk = uniquePans.slice(i, i + CHUNK_SIZE);
+        const placeholders = chunk.map(() => "?").join(",");
+        queries.push(this.db.prepare(`SELECT pan FROM cdata WHERE pan IN (${placeholders})`).bind(...chunk).all());
+      }
+      const results = await Promise.all(queries);
+      results.forEach(result => { (result.results || []).forEach(r => duplicates.add(r.pan)); });
+    }
+    return duplicates;
+  }
+  
+  async importCards(cards) {
+    // Direct insert approach - no TEMP TABLE to avoid SQLITE_AUTH errors
+    // Insert directly into cdata using multi-value INSERT (like checkDuplicates pattern)
+    const CARDS_PER_INSERT = 12; // 12 cards × 8 params = 96 params (optimized, D1 limit is 100)
+    let success = 0, skipped = 0, errors = [];
+    
+    // Track affected BINs for stats update
+    const affectedBins = new Set();
+    
+    for (let i = 0; i < cards.length; i += CARDS_PER_INSERT) {
+      const chunk = cards.slice(i, i + CARDS_PER_INSERT);
+      try {
+        // Direct insert into cdata using multi-value INSERT (fast, no TEMP TABLE)
+        const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, 'unknown')").join(",");
+        const values = [];
+        chunk.forEach(c => {
+          values.push(c.pan, c.mm, c.yy, c.cvv, c.bin, c.last4, c.info || null);
+          affectedBins.add(c.bin);
+        });
+        await this.db.prepare(`INSERT OR IGNORE INTO cdata (pan, mm, yy, cvv, Bin, last4, info, status) VALUES ${placeholders}`).bind(...values).run();
+        success += chunk.length;
+      } catch (error) {
+        skipped += chunk.length;
+        errors.push(`Chunk ${Math.floor(i / CARDS_PER_INSERT) + 1}: ${error.message}`);
+      }
+    }
+    
+    // Update stats for affected BINs - optimized: batch metadata queries
+    const binsArray = Array.from(affectedBins);
+    if (binsArray.length > 0) {
+      const STATS_BATCH = 50; // Process 50 BINs at a time
+      for (let i = 0; i < binsArray.length; i += STATS_BATCH) {
+        const binBatch = binsArray.slice(i, i + STATS_BATCH);
+        try {
+          const binPlaceholders = binBatch.map(() => "?").join(",");
+          
+          // Batch query BIN metadata (much faster than individual queries)
+          const binMetadataResult = await this.db.prepare(`
+            SELECT BIN, Brand, Type, Category, isoCode2, Issuer, CountryName 
+            FROM BIN_Data 
+            WHERE BIN IN (${binPlaceholders})
+          `).bind(...binBatch).all();
+          const binMetadataMap = new Map((binMetadataResult.results || []).map(b => [b.BIN, b]));
+          
+          // Calculate stats for this batch of BINs from cdata
+          const statsResult = await this.db.prepare(`
+            SELECT 
+              c.Bin,
+              COUNT(*) as total_cards,
+              SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards,
+              SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards,
+              SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards,
+              SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards
+            FROM cdata c
+            WHERE c.Bin IN (${binPlaceholders})
+            GROUP BY c.Bin
+          `).bind(...binBatch).all();
+          
+          // Batch update bin_inventory
+          const binInventoryStmts = [];
+          for (const stat of statsResult.results || []) {
+            const binMeta = binMetadataMap.get(stat.Bin) || {};
+            binInventoryStmts.push(this.db.prepare(`
+              INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(Bin) DO UPDATE SET 
+                total_cards=excluded.total_cards,
+                live_cards=excluded.live_cards,
+                ct_cards=excluded.ct_cards,
+                die_cards=excluded.die_cards,
+                unknown_cards=excluded.unknown_cards,
+                updated_at=strftime('%s','now')
+            `).bind(
+              stat.Bin,
+              binMeta.Brand || 'UNKNOWN',
+              binMeta.Type || 'UNKNOWN',
+              binMeta.Category || 'UNKNOWN',
+              binMeta.isoCode2 || 'XX',
+              binMeta.Issuer || 'UNKNOWN',
+              binMeta.CountryName || null,
+              stat.total_cards,
+              stat.live_cards,
+              stat.ct_cards,
+              stat.die_cards,
+              stat.unknown_cards
+            ));
+          }
+          if (binInventoryStmts.length > 0) {
+            await this.db.batch(binInventoryStmts);
+          }
+          
+          // Update country_stats - recalculate from bin_inventory for affected BINs
+          const countryStatsResult = await this.db.prepare(`
+            SELECT 
+              isoCode2, Brand, Type, Category, Issuer,
+              SUM(total_cards) as total_cards,
+              SUM(live_cards) as live_cards,
+              SUM(ct_cards) as ct_cards,
+              SUM(die_cards) as die_cards,
+              SUM(unknown_cards) as unknown_cards
+            FROM bin_inventory
+            WHERE Bin IN (${binPlaceholders})
+            GROUP BY isoCode2, Brand, Type, Category, Issuer
+          `).bind(...binBatch).all();
+          
+          // Batch update country_stats
+          const countryStatsStmts = [];
+          for (const cs of countryStatsResult.results || []) {
+            countryStatsStmts.push(this.db.prepare(`
+              INSERT INTO country_stats (isoCode2, Brand, Type, Category, Issuer, total_cards, live_cards, ct_cards, die_cards, unknown_cards)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(isoCode2, Brand, Type, Category, Issuer) DO UPDATE SET 
+                total_cards=excluded.total_cards,
+                live_cards=excluded.live_cards,
+                ct_cards=excluded.ct_cards,
+                die_cards=excluded.die_cards,
+                unknown_cards=excluded.unknown_cards,
+                updated_at=strftime('%s','now')
+            `).bind(
+              cs.isoCode2,
+              cs.Brand,
+              cs.Type,
+              cs.Category,
+              cs.Issuer,
+              cs.total_cards,
+              cs.live_cards,
+              cs.ct_cards,
+              cs.die_cards,
+              cs.unknown_cards
+            ));
+          }
+          if (countryStatsStmts.length > 0) {
+            await this.db.batch(countryStatsStmts);
+          }
+        } catch (error) {
+          // Stats update error - log but don't fail the import
+          console.error(`Stats update error for batch ${Math.floor(i / STATS_BATCH) + 1}:`, error.message);
+        }
+      }
+    }
+    
+    return { success, skipped, errors };
+  }
+
+  async buildBinCardStats() {
+    try {
+      await this.db.batch([
+        this.db.prepare(`DELETE FROM bin_inventory`),
+        this.db.prepare(`INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards) SELECT c.Bin, COALESCE(b.Brand,'UNKNOWN'), COALESCE(b.Type,'UNKNOWN'), COALESCE(b.Category,'UNKNOWN'), COALESCE(b.isoCode2,'XX'), COALESCE(b.Issuer,'UNKNOWN'), b.CountryName, COUNT(*) as total_cards, SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards, SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards, SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards, SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards FROM cdata c LEFT JOIN BIN_Data b ON c.Bin = b.BIN GROUP BY c.Bin`)
+      ]);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  async buildCountryBinStats() {
+    try {
+      await this.db.batch([
+        this.db.prepare(`DELETE FROM country_stats`),
+        this.db.prepare(`INSERT INTO country_stats (isoCode2, Brand, Type, Category, Issuer, total_cards, live_cards, ct_cards, die_cards, unknown_cards) SELECT isoCode2, Brand, Type, Category, Issuer, SUM(total_cards) as total_cards, SUM(live_cards) as live_cards, SUM(ct_cards) as ct_cards, SUM(die_cards) as die_cards, SUM(unknown_cards) as unknown_cards FROM bin_inventory GROUP BY isoCode2, Brand, Type, Category, Issuer`)
+      ]);
+      return true;
+    } catch (e) { return false; }
+  }
+};
+
+// Cache Service
+var CacheService = class {
+  static { __name(this, "CacheService"); }
+  constructor(kv) { this.kv = kv; this.ttl = 3600; }
+  
+  key(prefix, params) {
+    return `${prefix}:${Object.keys(params).sort().map(k => `${k}:${params[k]}`).join("|")}`;
+  }
+  
+  async get(prefix, params) {
+    try {
+      const data = await this.kv.get(this.key(prefix, params));
+      return data ? JSON.parse(data) : null;
+    } catch { return null; }
+  }
+  
+  async set(prefix, params, data, ttl) {
+    try {
+      await this.kv.put(this.key(prefix, params), JSON.stringify(data), { expirationTtl: ttl || this.ttl });
+    } catch (e) { console.error("Cache error:", e); }
+  }
+  
+  async clear(pattern) {
+    try {
+      const keys = await this.kv.list({ prefix: pattern });
+      for (const key of keys.keys) await this.kv.delete(key.name);
+    } catch (e) { console.error("Clear cache error:", e); }
+  }
+};
+
+// Card Utils
+var CardUtils = class {
+  static { __name(this, "CardUtils"); }
+  
+  static luhnCheck(pan) {
+    let sum = 0;
+    let isEven = false;
+    for (let i = pan.length - 1; i >= 0; i--) {
+      let digit = parseInt(pan[i]);
+      if (isEven) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      isEven = !isEven;
+    }
+    return sum % 10 === 0;
+  }
+  
+  static isExpired(mm, yy) {
+    const now = new Date();
+    const currentYear = now.getFullYear() % 100;
+    const currentMonth = now.getMonth() + 1;
+    const year = parseInt(yy);
+    const month = parseInt(mm);
+    
+    if (year < currentYear) return true;
+    if (year === currentYear && month < currentMonth) return true;
+    return false;
+  }
+  
+  static normalize(line, filterExpired = false) {
+    line = line.trim();
+    if (!line) return { error: "Empty line" };
+    
+    line = line.replace(/\s*\|\s*/g, '|');
+    line = line.replace(/\s*\/\s*/g, '/');
+    line = line.replace(/\s*,\s*/g, ',');
+    
+    const patterns = [
+      { regex: /^(\d{15,19})\|(\d{1,2})\|(\d{2,4})\|(\d{3,4})(.*)$/, delimiter: '|' },
+      { regex: /^(\d{15,19})\/(\d{1,2})\/(\d{2,4})\/(\d{3,4})(.*)$/, delimiter: '/' },
+      { regex: /^(\d{15,19}),(\d{1,2}),(\d{2,4}),(\d{3,4})(.*)$/, delimiter: ',' },
+      { regex: /^(\d{15,19})\s+(\d{1,2})\s+(\d{2,4})\s+(\d{3,4})(.*)$/, delimiter: ' ' }
+    ];
+    
+    for (const pattern of patterns) {
+      const match = line.match(pattern.regex);
+      if (match) {
+        const [, pan, mm, yy, cvv, extraInfo] = match;
+        
+        if (!/^\d+$/.test(pan)) return { error: "PAN contains non-digit" };
+        if (pan.length < 13) return { error: "PAN too short (min 13 digits)" };
+        if (pan.length > 19) return { error: "PAN too long (max 19 digits)" };
+        if (!CardUtils.luhnCheck(pan)) return { error: "Invalid PAN (Luhn check failed)" };
+        
+        if (!/^\d+$/.test(mm)) return { error: "Month not numeric" };
+        const month = parseInt(mm);
+        if (month < 1 || month > 12) return { error: "Invalid month" };
+        
+        if (!/^\d+$/.test(yy)) return { error: "Year not numeric" };
+        if (yy.length !== 2 && yy.length !== 4) return { error: "Invalid year format" };
+        
+        if (!/^\d+$/.test(cvv)) return { error: "CVV not numeric" };
+        if (cvv.length < 3) return { error: "CVV too short" };
+        if (cvv.length > 4) return { error: "CVV too long" };
+        
+        let normalizedYY = yy.length === 4 ? yy.slice(-2) : yy;
+        const paddedMM = mm.padStart(2, '0');
+        const paddedYY = normalizedYY.padStart(2, '0');
+        
+        if (filterExpired && CardUtils.isExpired(paddedMM, paddedYY)) {
+          return { error: "Card expired" };
+        }
+        
+        let info = null;
+        if (extraInfo && extraInfo.trim()) {
+          info = extraInfo.replace(/^[\|\/, ]+/, '').trim();
+          if (info.length === 0) info = null;
+        }
+        
+        return {
+          pan, 
+          cvv, 
+          info,
+          mm: paddedMM, 
+          yy: paddedYY,
+          bin: pan.slice(0, 6),
+          last4: pan.slice(-4),
+          normalized: `${pan}|${paddedMM}|${paddedYY}|${cvv}`
+        };
+      }
+    }
+    return { error: "Invalid format" };
+  }
+  
+  static normalizeAll(lines, filterExpired = false) {
+    const valid = [], errors = [];
+    lines.forEach((line, i) => {
+      const result = CardUtils.normalize(line, filterExpired);
+      if (result?.error) {
+        const truncated = line.length > 28 ? line.substring(0, 28) + '..' : line;
+        errors.push(`${truncated}\t${result.error}`);
+      } else if (result) {
+        valid.push(result);
+      }
+    });
+    return { valid, errors };
+  }
+};
+
+// Router
+var Router = class {
+  static { __name(this, "Router"); }
+  constructor(db, kv) {
+    this.db = new DatabaseService(db);
+    this.cache = new CacheService(kv);
+  }
+  
+  json(data, status = 200) {
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      }
+    });
+  }
+  
+  parseParams(url) {
+    const p = {};
+    ['bin', 'brand', 'type', 'category', 'country', 'issuer'].forEach(k => {
+      if (url.searchParams.get(k)) p[k] = url.searchParams.get(k);
+    });
+    p.limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "50"), 1), 1000);
+    p.offset = Math.max(parseInt(url.searchParams.get("offset") || "0"), 0);
+    return p;
+  }
+  
+  async cardStats() {
+    try {
+      const cached = await this.cache.get("card-stats", {});
+      if (cached) return this.json(cached);
+      
+      const data = await this.db.getCardStats();
+      const response = { success: true, data };
+      await this.cache.set("card-stats", {}, response, CACHE_TTL.CARD_STATS);
+      return this.json(response);
+    } catch (error) {
+      console.error("Card stats error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async searchBins(request) {
+    try {
+      const body = await request.json();
+      const cached = await this.cache.get("search-bins", body);
+      if (cached) return this.json(cached);
+      
+      const result = await this.db.searchBins(body);
+      const response = { success: true, ...result };
+      await this.cache.set("search-bins", body, response, CACHE_TTL.SEARCH);
+      return this.json(response);
+    } catch (error) {
+      console.error("Search bins error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async exportCards(request) {
+    try {
+      const body = await request.json();
+      const result = await this.db.exportCards(body);
+      return this.json({ success: true, ...result });
+    } catch (error) {
+      console.error("Export cards error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async search(request) {
+    try {
+      const params = this.parseParams(new URL(request.url));
+      const cached = await this.cache.get("search", params);
+      if (cached) return this.json(cached);
+      
+      const { data, total } = await this.db.searchBIN(params);
+      const response = {
+        success: true, data,
+        pagination: { total, limit: params.limit, offset: params.offset, hasMore: params.offset + params.limit < total }
+      };
+      await this.cache.set("search", params, response, CACHE_TTL.SEARCH);
+      return this.json(response);
+    } catch (error) {
+      console.error("Search error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async getBIN(bin) {
+    try {
+      const cached = await this.cache.get("bin", { bin });
+      if (cached) return this.json(cached);
+      
+      const data = await this.db.getBINById(bin);
+      if (!data) return this.json({ success: false, error: "Not found" }, 404);
+      
+      const response = { 
+        success: true, 
+        data: {
+          ...data,
+          metadata: {
+            alpha_2: data.country,
+            alpha_3: this.getCountryAlpha3(data.country),
+            country_name: this.getCountryName(data.country),
+            currency: this.getCountryCurrency(data.country)
+          }
+        }
+      };
+      await this.cache.set("bin", { bin }, response, CACHE_TTL.BIN_DETAIL);
+      return this.json(response);
+    } catch (error) {
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async stats() {
+    try {
+      const cached = await this.cache.get("stats", {});
+      if (cached) return this.json(cached);
+      
+      const data = await this.db.getStats();
+      const response = { success: true, data };
+      await this.cache.set("stats", {}, response, CACHE_TTL.STATS);
+      return this.json(response);
+    } catch (error) {
+      console.error("Stats error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async dashboard() {
+    try {
+      const cached = await this.cache.get("dashboard", {});
+      if (cached) return this.json(cached);
+      
+      // Dashboard chỉ query từ bin_inventory (không dùng BIN_Data)
+      const data = await this.db.getDashboardStats();
+      
+      const response = { success: true, data };
+      await this.cache.set("dashboard", {}, response, CACHE_TTL.DASHBOARD);
+      return this.json(response);
+    } catch (error) {
+      console.error("Dashboard error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async filters() {
+    try {
+      const cached = await this.cache.get("filters", {});
+      if (cached) return this.json(cached);
+      
+      const data = await this.db.getFilters();
+      const response = { success: true, data };
+      await this.cache.set("filters", {}, response, CACHE_TTL.FILTERS);
+      return this.json(response);
+    } catch (error) {
+      console.error("Filters error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async rebuildStats(request, env) {
+    try {
+      const token = request.headers.get('X-Admin-Token') || '';
+      if (!env || !env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) return this.json({ success: false, error: "Unauthorized" }, 401);
+      const ok1 = await this.db.buildBinCardStats();
+      const ok2 = await this.db.buildCountryBinStats();
+      await Promise.all([
+        this.cache.clear("dashboard"),
+        this.cache.clear("stats"),
+        this.cache.clear("card-stats"),
+        this.cache.clear("search")
+      ]);
+      return this.json({ success: !!(ok1 && ok2) });
+    } catch (error) {
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async normalizeCards(request) {
+    try {
+      const { cards, filterExpired } = await request.json();
+      if (!cards || !Array.isArray(cards)) return this.json({ success: false, error: "Invalid input" }, 400);
+      if (cards.length > 100000) return this.json({ success: false, error: "Max 100,000 cards" }, 400);
+      
+      const result = CardUtils.normalizeAll(cards, filterExpired || false);
+      return this.json({
+        success: true,
+        data: {
+          total: cards.length,
+          valid: result.valid.map(c => c.normalized),
+          validCount: result.valid.length,
+          errors: result.errors,
+          errorCount: result.errors.length
+        }
+      });
+    } catch (error) {
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async checkDuplicates(request) {
+    try {
+      const { cards } = await request.json();
+      if (!cards || !Array.isArray(cards)) return this.json({ success: false, error: "Invalid input" }, 400);
+      
+      const pans = [];
+      const lineMap = new Map();
+      
+      cards.forEach((line, idx) => {
+        const normalized = line.trim().replace(/\s*\|\s*/g, '|');
+        const match = normalized.match(/^(\d{15,19})/);
+        if (match) {
+          const pan = match[1];
+          pans.push(pan);
+          if (!lineMap.has(pan)) lineMap.set(pan, []);
+          lineMap.get(pan).push({ idx, line: line.trim() });
+        }
+      });
+      
+      if (pans.length === 0) {
+        return this.json({ 
+          success: true, 
+          data: { 
+            total: cards.length,
+            unique: [], 
+            uniqueCount: 0, 
+            duplicates: [],
+            duplicateCount: 0 
+          } 
+        });
+      }
+      
+      const duplicatePans = await this.db.checkDuplicates(pans);
+      
+      const unique = [];
+      const duplicates = [];
+      
+      lineMap.forEach((items, pan) => {
+        if (duplicatePans.has(pan)) {
+          items.forEach(item => {
+            const truncated = item.line.length > 28 ? item.line.substring(0, 28) + '..' : item.line;
+            duplicates.push(`${truncated}\tDuplicate in database`);
+          });
+        } else {
+          items.forEach(item => unique.push(item.line));
+        }
+      });
+      
+      return this.json({
+        success: true,
+        data: {
+          total: cards.length,
+          unique: unique,
+          uniqueCount: unique.length,
+          duplicates: duplicates,
+          duplicateCount: duplicates.length
+        }
+      });
+    } catch (error) {
+      console.error("Check duplicates error:", error);
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async importCards(request) {
+    try {
+      const { cards } = await request.json();
+      if (!cards || !Array.isArray(cards)) return this.json({ success: false, error: "Invalid input" }, 400);
+      if (cards.length > 100000) return this.json({ success: false, error: "Max 100,000 cards" }, 400);
+      
+      const normalized = CardUtils.normalizeAll(cards);
+      if (normalized.valid.length === 0) {
+        return this.json({ 
+          success: false, 
+          error: "No valid cards", 
+          data: {
+            total: cards.length,
+            imported: 0,
+            skipped: 0,
+            errors: normalized.errors,
+            errorCount: normalized.errors.length
+          }
+        }, 400);
+      }
+      
+      const result = await this.db.importCards(normalized.valid);
+      await Promise.all([
+        this.cache.clear("dashboard"),
+        this.cache.clear("stats"),
+        this.cache.clear("card-stats"),
+        this.cache.clear("search")
+      ]);
+      
+      const allErrors = [...normalized.errors, ...result.errors.map(e => `Error\t${e}`)];
+      
+      return this.json({
+        success: true,
+        data: {
+          total: cards.length,
+          imported: result.success,
+          skipped: result.skipped,
+          errors: allErrors,
+          errorCount: allErrors.length
+        }
+      });
+    } catch (error) {
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  async export(request) {
+    try {
+      const params = this.parseParams(new URL(request.url));
+      params.limit = 10000;
+      params.offset = 0;
+      const { data } = await this.db.searchBIN(params);
+      
+      if (new URL(request.url).searchParams.get("format") === "csv") {
+        const headers = Object.keys(data[0] || {});
+        const csv = [headers.join(","), ...data.map(row => headers.map(h => JSON.stringify(row[h] || "")).join(","))].join("\n");
+        return new Response(csv, {
+          headers: { "Content-Type": "text/csv", "Content-Disposition": 'attachment; filename="bin-data.csv"' }
+        });
+      }
+      return this.json({ success: true, data });
+    } catch (error) {
+      return this.json({ success: false, error: error.message }, 500);
+    }
+  }
+  
+  getCountryAlpha3(country) {
+    const map = { US: "USA", PL: "POL", GB: "GBR", JP: "JPN", VN: "VNM", CA: "CAN", AU: "AUS", DE: "DEU" };
+    return map[country] || country;
+  }
+  
+  getCountryName(country) {
+    const map = { US: "United States", PL: "Poland", GB: "United Kingdom", JP: "Japan", VN: "Vietnam", CA: "Canada", AU: "Australia", DE: "Germany" };
+    return map[country] || country;
+  }
+  
+  getCountryCurrency(country) {
+    const map = { US: "USD", PL: "PLN", GB: "GBP", JP: "JPY", VN: "VND", CA: "CAD", AU: "AUD", DE: "EUR" };
+    return map[country] || "USD";
+  }
+};
+
+// Main Worker
+var index_default = {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        }
+      });
+    }
+    
+    const router = new Router(env.DB, env.CACHE);
+    
+    ctx.waitUntil(router.db.ensureIndexes());
+    
+    try {
+      if (path === "/" || path === "/index.html") return new Response(getHTML(), { headers: { "Content-Type": "text/html" } });
+      if (path === "/api/bin") return router.search(request);
+      if (path === "/api/bin/export") return router.export(request);
+      if (path === "/api/stats") return router.stats();
+      if (path === "/api/dashboard") return router.dashboard();
+      if (path === "/api/filters") return router.filters();
+      if (path === "/api/card-stats" && request.method === "GET") return router.cardStats();
+      if (path === "/api/search-bins" && request.method === "POST") return router.searchBins(request);
+      if (path === "/api/export-cards" && request.method === "POST") return router.exportCards(request);
+      if (path === "/api/normalize" && request.method === "POST") return router.normalizeCards(request);
+      if (path === "/api/check-duplicates" && request.method === "POST") return router.checkDuplicates(request);
+      if (path === "/api/import" && request.method === "POST") return router.importCards(request);
+      if (path === "/api/admin/rebuild-stats" && request.method === "POST") return router.rebuildStats(request, env);
+      if (path.match(/^\/api\/bin\/([^\/]+)$/)) return router.getBIN(path.split("/")[3]);
+      
+      return new Response(JSON.stringify({ success: false, error: "Not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" }
+      });
+    } catch (error) {
+      console.error("[Worker] Error:", error);
+      return new Response(JSON.stringify({ success: false, error: error.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+};
+
+function getHTML() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BIN Database System</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+<style>
+html{overflow-y:scroll}
+*{transition:all .2s ease}
+body{background:linear-gradient(135deg,#f0f4f8,#e2e8f0);min-height:100vh;color:#1e293b;padding-top:70px}
+.glass{background:rgba(255,255,255,.8);backdrop-filter:blur(16px);border:1px solid rgba(148,163,184,.2);box-shadow:0 8px 32px rgba(0,0,0,.1)}
+.glass:hover{background:rgba(255,255,255,.95);border-color:rgba(148,163,184,.3)}
+.gradient-text{background:linear-gradient(135deg,#667eea,#764ba2);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.animated-gradient{background:linear-gradient(270deg,#667eea,#764ba2,#f093fb);background-size:600% 600%;animation:gradient 8s ease infinite}
+@keyframes gradient{0%,100%{background-position:0 50%}50%{background-position:100% 50%}}
+.hover-lift{transition:transform .3s,box-shadow .3s}
+.hover-lift:hover{transform:translateY(-4px);box-shadow:0 20px 40px rgba(0,0,0,.4)}
+.skeleton{background:linear-gradient(90deg,#e2e8f0 25%,#cbd5e1 50%,#e2e8f0 75%);background-size:200% 100%;animation:loading 1.5s infinite}
+@keyframes loading{to{background-position:-200% 0}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.7}}
+.pulse{animation:pulse 2s infinite}
+@keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.fade-in{animation:fadeIn .5s}
+.input-glow:focus{box-shadow:0 0 0 3px rgba(99,102,241,.3)}
+.btn-primary{background:linear-gradient(135deg,#667eea,#764ba2);position:relative;overflow:hidden}
+.btn-primary::before{content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent);transition:left .5s}
+.btn-primary:hover::before{left:100%}
+.badge{display:inline-flex;align-items:center;gap:.25rem;padding:.375rem .75rem;border-radius:9999px;font-size:.75rem;font-weight:600;text-transform:uppercase}
+.badge-credit{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;box-shadow:0 4px 6px rgba(59,130,246,.3)}
+.badge-debit{background:linear-gradient(135deg,#10b981,#059669);color:#fff;box-shadow:0 4px 6px rgba(16,185,129,.3)}
+.badge-prepaid{background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;box-shadow:0 4px 6px rgba(245,158,11,.3)}
+.badge-default{background:linear-gradient(135deg,#6b7280,#4b5563);color:#fff}
+tbody tr{transition:all .2s}
+tbody tr:hover{background:linear-gradient(90deg,rgba(102,126,234,.08),rgba(139,92,246,.08));transform:scale(1.01)}
+.scrollbar::-webkit-scrollbar{width:8px;height:8px}
+.scrollbar::-webkit-scrollbar-track{background:rgba(241,245,249,.5);border-radius:4px}
+.scrollbar::-webkit-scrollbar-thumb{background:rgba(148,163,184,.4);border-radius:4px}
+.scrollbar::-webkit-scrollbar-thumb:hover{background:rgba(148,163,184,.6)}
+.loading{border:3px solid rgba(148,163,184,.2);border-top-color:#667eea;border-radius:50%;width:24px;height:24px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sticky-nav{position:fixed;top:0;left:0;right:0;z-index:1000;background:rgba(255,255,255,.95);backdrop-filter:blur(20px);border-bottom:1px solid rgba(148,163,184,.2);box-shadow:0 4px 24px rgba(0,0,0,.1)}
+.nav-tabs{display:flex;align-items:center;gap:.5rem;padding:.75rem 1rem;overflow-x:auto}
+.nav-tabs::-webkit-scrollbar{display:none}
+.tab-btn{padding:.625rem 1.5rem;border-radius:.75rem;font-weight:600;font-size:.95rem;cursor:pointer;background:rgba(248,250,252,.8);border:1px solid rgba(148,163,184,.2);color:#475569;white-space:nowrap;display:flex;align-items:center;gap:.5rem}
+.tab-btn:hover{background:rgba(241,245,249,.9);border-color:rgba(148,163,184,.3)}
+.tab-btn.active{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border-color:transparent;box-shadow:0 4px 16px rgba(102,126,234,.4)}
+.tab-btn .icon{font-size:1.1rem}
+.logo-btn{padding:.625rem 1rem;background:linear-gradient(135deg,#667eea,#764ba2);border-radius:.75rem;font-weight:700;border:none;margin-right:.5rem}
+.gen-btn{padding:.625rem 1.5rem;background:rgba(16,185,129,.2);border:1px solid rgba(16,185,129,.5);border-radius:.75rem;font-weight:600;color:#10b981;margin-left:auto}
+.gen-btn:hover{background:rgba(16,185,129,.3);border-color:rgba(16,185,129,.7)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+input,textarea,select{background:rgba(255,255,255,.9);border:1px solid rgba(148,163,184,.3);border-radius:.75rem;padding:.75rem 1rem;color:#1e293b;width:100%}
+input:focus,textarea:focus,select:focus{outline:none;border-color:#667eea;box-shadow:0 0 0 3px rgba(102,126,234,.2)}
+textarea{white-space:nowrap;overflow-x:auto;font-family:monospace}
+textarea.keep-scroll-start{scroll-behavior:auto}
+table{width:100%;border-collapse:collapse}
+th{background:rgba(241,245,249,.8);padding:1rem;text-align:left;font-weight:600;color:#475569}
+td{padding:1rem;border-bottom:1px solid rgba(148,163,184,.2);color:#334155}
+.progress-bar{width:100%;height:4px;background:rgba(148,163,184,.2);border-radius:2px;overflow:hidden;margin:8px 0}
+.progress-fill{height:100%;background:linear-gradient(90deg,#667eea,#764ba2);transition:width .3s}
+@media (max-width:768px){
+body{padding-top:60px}
+.nav-tabs{padding:.5rem}
+.tab-btn{padding:.5rem 1rem;font-size:.875rem}
+.tab-btn .text{display:none}
+.tab-btn .icon{font-size:1.25rem}
+.logo-btn{padding:.5rem .75rem}
+.gen-btn{padding:.5rem 1rem;font-size:.875rem}
+}
+</style>
+</head>
+<body>
+
+<nav class="sticky-nav">
+<div class="nav-tabs container mx-auto">
+<button class="tab-btn active" data-tab="dashboard">
+<span class="icon">📊</span><span class="text">Dashboard</span>
+</button>
+<button class="tab-btn" data-tab="binchecker">
+<span class="icon">🔍</span><span class="text">Bin Checker</span>
+</button>
+<button class="tab-btn" data-tab="cardchecker">
+<span class="icon">💳</span><span class="text">Card Checker</span>
+</button>
+<button class="tab-btn" data-tab="tools">
+<span class="icon">🔧</span><span class="text">Tools</span>
+</button>
+<a href="https://gencard.minhvu-vng.workers.dev" target="_blank" class="gen-btn">
+<span class="icon">🔗</span><span class="text">Gen Data</span>
+</a>
+</div>
+</nav>
+
+<div class="container mx-auto px-4 py-3 fade-in">
+
+<!-- Dashboard Tab -->
+<div id="dashboard" class="tab-content active">
+<div class="glass rounded-2xl p-4">
+<div class="flex justify-between items-center mb-4">
+<h2 class="text-2xl font-bold">Dashboard</h2>
+<button id="refreshDash" class="btn glass px-6 py-3 rounded-xl hover-lift"><i class="fas fa-sync mr-2"></i>Refresh</button>
+</div>
+<div id="dashContent">
+<div class="text-center py-8"><div class="loading inline-block"></div></div>
+</div>
+</div>
+</div>
+
+<!-- Bin Checker Tab -->
+<div id="binchecker" class="tab-content">
+<div class="glass rounded-2xl p-4 mb-4 hover-lift">
+<div class="flex items-center mb-4">
+<div class="p-2 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-lg mr-3">
+<i class="fas fa-filter text-white"></i>
+</div>
+<h2 class="text-xl font-bold">Search Filters</h2>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+<div class="md:col-span-2 lg:col-span-4">
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2 flex justify-between">
+<span><i class="fas fa-hashtag mr-1 text-indigo-400"></i>BIN Numbers</span>
+<span id="binCounter" class="px-3 py-1 bg-indigo-600 rounded-full text-white text-xs">374788</span>
+</label>
+<textarea id="binInput" rows="4" class="w-full glass rounded-xl px-4 py-3 text-gray-900 font-mono focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 resize-none input-glow scrollbar" placeholder="Enter BIN numbers (comma or newline separated)"></textarea>
+</div>
+<div class="relative">
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-credit-card mr-1 text-indigo-400"></i>Brand
+</label>
+<input id="brandFilter" list="brands-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
+<datalist id="brands-list"></datalist>
+</div>
+<div class="relative">
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-tag mr-1 text-blue-400"></i>Type
+</label>
+<input id="typeFilter" list="types-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
+<datalist id="types-list"></datalist>
+</div>
+<div class="relative">
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-layer-group mr-1 text-purple-400"></i>Category
+</label>
+<input id="categoryFilter" list="categories-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
+<datalist id="categories-list"></datalist>
+</div>
+<div class="relative">
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-globe mr-1 text-green-400"></i>Country
+</label>
+<input id="countryFilter" list="countries-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Select..."/>
+<datalist id="countries-list"></datalist>
+</div>
+<div class="md:col-span-2">
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-building mr-1 text-yellow-400"></i>Issuer
+</label>
+<input id="issuerFilter" list="issuers-list" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Search..."/>
+<datalist id="issuers-list"></datalist>
+</div>
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-list-ol mr-1 text-cyan-400"></i>Limit
+</label>
+<input type="number" id="limitInput" value="10" min="1" max="1000" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+</div>
+</div>
+<div class="flex flex-wrap gap-3">
+<button id="searchBtn" class="px-8 py-3 btn-primary rounded-xl font-semibold hover-lift">
+<i class="fas fa-search mr-2"></i>Bin Checker
+</button>
+<button id="clearBtn" class="px-8 py-3 glass rounded-xl font-semibold hover-lift">
+<i class="fas fa-times mr-2"></i>Clear
+</button>
+</div>
+</div>
+
+<div class="glass rounded-2xl p-4">
+<div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+<div class="flex items-center gap-3">
+<div class="p-2 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg">
+<i class="fas fa-table text-white"></i>
+</div>
+<h2 class="text-xl font-bold">Results</h2>
+<button id="copyBinsBtn" class="px-4 py-2 btn-primary rounded-lg font-semibold hover-lift text-sm ml-2">
+<i class="fas fa-copy mr-1"></i>Copy BINs List
+</button>
+</div>
+<div class="flex items-center gap-3 flex-wrap">
+<div class="text-sm text-gray-600 glass px-4 py-2 rounded-lg">
+<i class="fas fa-list mr-2"></i>
+<span id="showingCount" class="font-semibold text-indigo-400">0-0</span> of 
+<span id="totalCount" class="font-semibold text-indigo-400">0</span>
+</div>
+<div class="flex items-center gap-2">
+<button id="prevBtn" class="glass px-4 py-2 rounded-lg hover-lift" disabled>
+<i class="fas fa-chevron-left"></i>
+</button>
+<div id="pageNumbers" class="flex items-center gap-1"></div>
+<button id="nextBtn" class="glass px-4 py-2 rounded-lg hover-lift" disabled>
+<i class="fas fa-chevron-right"></i>
+</button>
+<input id="pageJumpInput" type="number" min="1" class="w-20 glass rounded-lg px-3 py-2 text-gray-900 text-sm input-glow" placeholder="Page"/>
+<button id="pageJumpBtn" class="glass px-4 py-2 rounded-lg hover-lift">Go</button>
+</div>
+</div>
+</div>
+<div class="overflow-x-auto scrollbar">
+<table class="w-full">
+<thead>
+<tr class="border-b border-gray-300">
+<th class="px-6 py-4 text-left"><i class="fas fa-hashtag mr-2 text-indigo-400"></i>BIN</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-credit-card mr-2 text-blue-400"></i>Brand</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-tag mr-2 text-purple-400"></i>Type</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-layer-group mr-2 text-cyan-400"></i>Category</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-building mr-2 text-yellow-400"></i>Issuer</th>
+<th class="px-6 py-4 text-left"><i class="fas fa-flag mr-2 text-green-400"></i>Country</th>
+</tr>
+</thead>
+<tbody id="resultsBody"></tbody>
+</table>
+</div>
+<div id="noResults" class="hidden text-center py-12">
+<i class="fas fa-search text-6xl text-gray-600 mb-4"></i>
+<p class="text-xl text-gray-600">No results found</p>
+</div>
+</div>
+</div>
+
+<!-- Card Checker Tab (Card Exporter từ V3) -->
+<div id="cardchecker" class="tab-content">
+<div class="glass rounded-2xl p-4 mb-4 hover-lift">
+<div class="flex items-center mb-4">
+<div class="p-2 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-lg mr-3">
+<i class="fas fa-filter text-white"></i>
+</div>
+<h2 class="text-xl font-bold">Card Exporter</h2>
+</div>
+<p class="text-gray-600 mb-4">Export cards from database by BIN filters</p>
+
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-credit-card mr-1 text-indigo-400"></i>Brand
+</label>
+<select id="cardBrandFilter" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+<option value="">All Brands</option>
+</select>
+</div>
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-tag mr-1 text-blue-400"></i>Type
+</label>
+<select id="cardTypeFilter" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+<option value="">All Types</option>
+</select>
+</div>
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-layer-group mr-1 text-purple-400"></i>Category
+</label>
+<select id="cardCategoryFilter" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+<option value="">All Categories</option>
+</select>
+</div>
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-globe mr-1 text-green-400"></i>Country
+</label>
+<select id="cardCountryFilter" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+<option value="">All Countries</option>
+</select>
+</div>
+<div class="md:col-span-2">
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-building mr-1 text-yellow-400"></i>Issuer
+</label>
+<input id="cardIssuerFilter" type="text" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 input-glow" placeholder="Search issuer (partial match)..."/>
+</div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-sort-numeric-up mr-1 text-cyan-400"></i>Min Cards per BIN
+</label>
+<input type="number" id="minCardsInput" value="10" min="1" max="10000" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+<p class="text-xs text-gray-600 mt-1">Only BINs with ≥ this many cards</p>
+</div>
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-list-ol mr-1 text-pink-400"></i>Cards per BIN
+</label>
+<input type="number" id="cardsPerBinInput" value="50" min="1" max="100" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+<p class="text-xs text-gray-600 mt-1">Max: 100 cards/BIN</p>
+</div>
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-hashtag mr-1 text-orange-400"></i>Max BINs
+</label>
+<input type="number" id="maxBinsInput" value="10000" min="1" max="100000" class="w-full glass rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-indigo-500 input-glow">
+<p class="text-xs text-gray-600 mt-1">Max: 100,000 BINs (no limit recommended)</p>
+</div>
+<div>
+<label class="block text-xs font-semibold uppercase text-gray-700 mb-2">
+<i class="fas fa-check-circle mr-1 text-green-400"></i>Status Filter
+</label>
+<div class="space-y-2 mt-3">
+<label class="flex items-center gap-2 cursor-pointer">
+<input type="checkbox" id="statusUnknown" checked class="w-4 h-4 rounded">
+<span class="text-sm">Unknown</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input type="checkbox" id="statusLive" checked class="w-4 h-4 rounded">
+<span class="text-sm">Live (1)</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input type="checkbox" id="statusCT" checked class="w-4 h-4 rounded">
+<span class="text-sm">CT (2)</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input type="checkbox" id="statusDie" class="w-4 h-4 rounded">
+<span class="text-sm">Die (0)</span>
+</label>
+</div>
+</div>
+</div>
+
+<div class="flex flex-wrap gap-3">
+<button id="searchBinsBtn" class="px-8 py-3 btn-primary rounded-xl font-semibold hover-lift">
+<i class="fas fa-search mr-2"></i>Search BINs
+</button>
+<button id="clearCardFiltersBtn" class="px-8 py-3 glass rounded-xl font-semibold hover-lift">
+<i class="fas fa-times mr-2"></i>Clear
+</button>
+</div>
+</div>
+
+<div id="cardResultsSection" class="glass rounded-2xl p-4 mb-4 hidden">
+<div class="flex items-center justify-between mb-4">
+<div>
+<h3 class="text-xl font-bold mb-2">Results Preview</h3>
+<p class="text-gray-600">
+Found: <span id="foundBinsCount" class="text-indigo-400 font-bold">0</span> BINs | 
+Total Cards: <span id="totalCardsCount" class="text-indigo-400 font-bold">0</span>
+</p>
+</div>
+<button id="exportAllBtn" class="px-8 py-3 btn-primary rounded-xl font-semibold hover-lift">
+<i class="fas fa-download mr-2"></i>Export All
+</button>
+</div>
+
+<div class="overflow-x-auto scrollbar max-h-96">
+<table class="w-full">
+<thead>
+<tr class="border-b border-gray-300">
+<th class="px-6 py-4 text-left">BIN</th>
+<th class="px-6 py-4 text-left">Brand</th>
+<th class="px-6 py-4 text-left">Type</th>
+<th class="px-6 py-4 text-left">Category</th>
+<th class="px-6 py-4 text-left">Country</th>
+<th class="px-6 py-4 text-left">Cards</th>
+<th class="px-6 py-4 text-left">Live Rate</th>
+</tr>
+</thead>
+<tbody id="cardResultsBody"></tbody>
+</table>
+</div>
+</div>
+
+<div id="exportOptionsSection" class="glass rounded-2xl p-4 mb-4 hidden">
+<h3 class="text-xl font-bold mb-4">Export Options</h3>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+<div>
+<label class="block text-sm font-semibold text-gray-700 mb-2">Format</label>
+<div class="flex gap-4">
+<label class="flex items-center gap-2 cursor-pointer">
+<input type="radio" name="exportFormat" value="plain" checked class="w-4 h-4">
+<span class="text-sm">Text (pan|mm|yy|cvv)</span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input type="radio" name="exportFormat" value="withinfo" class="w-4 h-4">
+<span class="text-sm">Full Info</span>
+</label>
+</div>
+</div>
+</div>
+</div>
+
+<div id="exportProgressSection" class="glass rounded-2xl p-4 mb-4 hidden">
+<div class="flex items-center justify-between mb-4">
+<h3 class="text-xl font-bold">Exporting...</h3>
+<button id="cancelExportBtn" class="px-6 py-2 bg-red-600 hover:bg-red-700 rounded-xl font-semibold hover-lift">
+<i class="fas fa-times mr-2"></i>Cancel
+</button>
+</div>
+<div class="progress-bar mb-4">
+<div id="exportProgressFill" class="progress-fill" style="width:0%"></div>
+</div>
+<p class="text-gray-600 text-sm">
+<span id="exportProgressText">Preparing...</span> | 
+Exported: <span id="exportedCardsCount" class="text-indigo-400 font-bold">0</span> cards | 
+Time: <span id="exportTime" class="text-indigo-400 font-bold">0</span>s | 
+Speed: <span id="exportSpeed" class="text-indigo-400 font-bold">0</span> cards/s
+</p>
+</div>
+
+<div id="exportResultSection" class="glass rounded-2xl p-4 hidden">
+<div class="flex items-center justify-between mb-4">
+<h3 class="text-xl font-bold">Export Result</h3>
+<div class="flex gap-2">
+<button id="copyExportBtn" class="px-6 py-2 glass rounded-xl font-semibold hover-lift">
+<i class="fas fa-copy mr-2"></i>Copy All
+</button>
+<button id="downloadExportBtn" class="px-6 py-2 glass rounded-xl font-semibold hover-lift">
+<i class="fas fa-download mr-2"></i>Download
+</button>
+</div>
+</div>
+<textarea id="exportOutput" rows="20" class="w-full glass rounded-xl px-4 py-3 text-gray-900 font-mono text-sm scrollbar resize-none" readonly></textarea>
+</div>
+</div>
+
+<!-- Tools Tab (layout giống V2, logic dùng API V3) -->
+<div id="tools" class="tab-content">
+<div class="glass rounded-2xl p-4 mb-4 hover-lift">
+<h2 class="text-2xl font-bold mb-3 flex items-center gap-3">
+<i class="fas fa-tools text-indigo-400"></i>
+Card Tools
+</h2>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+
+<!-- Tool 1: Normalize -->
+<div class="glass rounded-xl p-3 hover-lift">
+<h3 class="text-lg font-bold mb-2 flex items-center gap-2">
+<div class="w-8 h-8 rounded-full bg-gradient-to-r from-blue-500 to-cyan-500 flex items-center justify-center text-sm font-bold">1</div>
+Normalize Cards
+</h3>
+
+<label class="flex items-center gap-2 text-sm mb-2 cursor-pointer">
+<input type="checkbox" id="filterExpiredCheck" class="w-4 h-4 rounded" checked>
+<span>Filter expired cards</span>
+</label>
+
+<textarea id="normalizeInput" rows="6" class="w-full glass rounded-lg px-3 py-2 text-sm font-mono scrollbar resize-none mb-2 keep-scroll-start" placeholder="Paste cards here (any format)..."></textarea>
+<div class="flex items-center justify-between mb-2">
+<div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="normalizeCount">0</b></div>
+<button id="normalizeBtn" class="px-4 py-2 btn-primary rounded-lg font-semibold hover-lift text-sm">
+<i class="fas fa-magic mr-1"></i>Normalize
+</button>
+</div>
+
+<div id="normalizeResult" class="hidden">
+<div class="flex items-center justify-between mb-2">
+<span class="text-xs text-gray-600">Valid: <b class="text-gray-900" id="normValid">0</b></span>
+<button id="copyNorm" class="px-3 py-1 glass rounded-lg text-xs hover-lift">
+<i class="fas fa-copy mr-1"></i>Copy
+</button>
+</div>
+<textarea id="normalizeOutput" rows="6" readonly class="w-full glass rounded-lg px-2 py-2 text-xs font-mono text-gray-900 scrollbar resize-none mb-2"></textarea>
+</div>
+
+<div id="normErrorSection" class="hidden">
+<div class="text-xs text-gray-600 mb-1">Errors: <b class="text-red-400" id="normError">0</b></div>
+<textarea id="normalizeErrors" rows="6" readonly class="w-full glass rounded-lg px-2 py-2 text-xs font-mono text-gray-900 scrollbar resize-none"></textarea>
+</div>
+</div>
+
+<!-- Tool 2: Check Duplicates -->
+<div class="glass rounded-xl p-3 hover-lift">
+<h3 class="text-lg font-bold mb-2 flex items-center gap-2">
+<div class="w-8 h-8 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center text-sm font-bold">2</div>
+Check Duplicates
+</h3>
+
+<p class="text-xs text-gray-600 mb-2">Check PAN against database</p>
+
+<textarea id="dupInput" rows="6" class="w-full glass rounded-lg px-3 py-2 text-sm font-mono scrollbar resize-none mb-2 keep-scroll-start" placeholder="Paste cards here..."></textarea>
+<div class="flex items-center justify-between mb-2">
+<div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="dupCount">0</b></div>
+<div class="flex gap-2">
+<input type="file" id="dupFileInput" accept=".txt" class="hidden">
+<button id="dupFileBtn" class="px-4 py-2 glass rounded-lg font-semibold hover-lift text-sm">
+<i class="fas fa-file-upload mr-1"></i>file.txt
+</button>
+<button id="dupBtn" class="px-4 py-2 btn-primary rounded-lg font-semibold hover-lift text-sm">
+<i class="fas fa-search mr-1"></i>Check
+</button>
+</div>
+</div>
+
+<div id="dupProgress" class="hidden mb-2">
+<div class="progress-bar">
+<div id="dupProgressFill" class="progress-fill" style="width:0%"></div>
+</div>
+<div class="text-xs text-center text-gray-600" id="dupProgressText">Processing...</div>
+</div>
+
+<div id="dupResult" class="hidden">
+<div class="flex items-center justify-between mb-2">
+<span class="text-xs text-gray-600">Total: <b class="text-gray-900" id="dupTotal">0</b> | Unique: <b class="text-green-400" id="dupUnique">0</b></span>
+<button id="copyDup" class="px-3 py-1 glass rounded-lg text-xs hover-lift">
+<i class="fas fa-copy mr-1"></i>Copy
+</button>
+</div>
+<textarea id="dupOutput" rows="6" readonly class="w-full glass rounded-lg px-2 py-2 text-xs font-mono text-gray-900 scrollbar resize-none mb-2"></textarea>
+</div>
+
+<div id="dupDupSection" class="hidden">
+<div class="text-xs text-gray-600 mb-1">Duplicates: <b class="text-yellow-400" id="dupDup">0</b></div>
+<textarea id="dupDupOutput" rows="6" readonly class="w-full glass rounded-lg px-2 py-2 text-xs font-mono text-gray-900 scrollbar resize-none"></textarea>
+</div>
+</div>
+
+<!-- Tool 3: Import -->
+<div class="glass rounded-xl p-3 hover-lift">
+<h3 class="text-lg font-bold mb-2 flex items-center gap-2">
+<div class="w-8 h-8 rounded-full bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center text-sm font-bold">3</div>
+Import to Database
+</h3>
+
+<p class="text-xs text-gray-600 mb-2">Import cards to database</p>
+
+<textarea id="importInput" rows="6" class="w-full glass rounded-lg px-3 py-2 text-sm font-mono scrollbar resize-none mb-2 keep-scroll-start" placeholder="Paste cards here (pan|mm|yy|cvv)..."></textarea>
+<div class="flex items-center justify-between mb-2">
+<div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="importCount">0</b></div>
+<div class="flex gap-2">
+<input type="file" id="importFileInput" accept=".txt" class="hidden">
+<button id="importFileBtn" class="px-4 py-2 glass rounded-lg font-semibold hover-lift text-sm">
+<i class="fas fa-file-upload mr-1"></i>file.txt
+</button>
+<button id="importBtn" class="px-4 py-2 btn-primary rounded-lg font-semibold hover-lift text-sm">
+<i class="fas fa-upload mr-1"></i>Import
+</button>
+</div>
+</div>
+
+<div id="importProgress" class="hidden mb-2">
+<div class="progress-bar">
+<div id="importProgressFill" class="progress-fill" style="width:0%"></div>
+</div>
+<div class="text-xs text-center text-gray-600" id="importProgressText">Processing...</div>
+</div>
+
+<div id="importStats" class="hidden mb-2 text-xs text-gray-600">
+<span>Imported: <b class="text-green-400" id="impSuccess">0</b></span> | 
+<span>Errors: <b class="text-red-400" id="impError">0</b></span>
+</div>
+
+<div id="impErrorSection" class="hidden">
+<label class="text-xs text-red-400 mb-1 block font-semibold">
+<i class="fas fa-exclamation-triangle mr-1"></i>Errors (Tab-separated):
+</label>
+<textarea id="importErrors" rows="6" readonly class="w-full glass rounded-lg px-2 py-2 text-xs font-mono text-gray-900 scrollbar resize-none"></textarea>
+</div>
+</div>
+
+</div>
+</div>
+</div>
+
+
+<script>
+class BINLookup{
+constructor(){
+this.currentResults=[];
+this.currentPage=0;
+this.filters={};
+this.cardExporter={bins:[],cancelExport:false};
+this.init();
+}
+
+async init(){
+await this.loadFilters();
+this.setupEventListeners();
+this.loadDashboard();
+}
+
+setupEventListeners(){
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+btn.addEventListener('click',()=>{
+document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+btn.classList.add('active');
+const tab=btn.dataset.tab;
+document.getElementById(tab).classList.add('active');
+if(tab==='dashboard')this.loadDashboard();
+});
+});
+
+
+document.getElementById('searchBtn').addEventListener('click',()=>this.search());
+document.getElementById('clearBtn').addEventListener('click',()=>this.clearFilters());
+document.getElementById('copyBinsBtn').addEventListener('click',()=>this.copyBinsList());
+document.getElementById('prevBtn').addEventListener('click',()=>this.previousPage());
+document.getElementById('nextBtn').addEventListener('click',()=>this.nextPage());
+document.getElementById('pageJumpBtn').addEventListener('click',()=>this.jumpToPage());
+document.getElementById('refreshDash').addEventListener('click',()=>this.loadDashboard(true));
+
+document.getElementById('normalizeBtn').addEventListener('click',()=>this.normalize());
+document.getElementById('copyNorm').addEventListener('click',()=>this.copy('normalizeOutput'));
+document.getElementById('dupBtn').addEventListener('click',()=>this.checkDup());
+document.getElementById('dupFileBtn').addEventListener('click',()=>document.getElementById('dupFileInput').click());
+document.getElementById('dupFileInput').addEventListener('change',(e)=>this.handleDupFileUpload(e));
+document.getElementById('copyDup').addEventListener('click',()=>this.copy('dupOutput'));
+document.getElementById('importBtn').addEventListener('click',()=>this.import());
+document.getElementById('importFileBtn').addEventListener('click',()=>document.getElementById('importFileInput').click());
+document.getElementById('importFileInput').addEventListener('change',(e)=>this.handleFileUpload(e));
+
+document.getElementById('searchBinsBtn').addEventListener('click',()=>this.searchBinsForExport());
+document.getElementById('clearCardFiltersBtn').addEventListener('click',()=>this.clearCardFilters());
+document.getElementById('exportAllBtn').addEventListener('click',()=>this.startExport());
+document.getElementById('cancelExportBtn').addEventListener('click',()=>this.cancelExport());
+document.getElementById('copyExportBtn').addEventListener('click',()=>this.copy('exportOutput'));
+document.getElementById('downloadExportBtn').addEventListener('click',()=>this.downloadExport());
+
+['Enter'].forEach(key=>{
+document.getElementById('binInput').addEventListener('keypress',e=>{if(e.key===key)this.search()});
+document.getElementById('pageJumpInput').addEventListener('keypress',e=>{if(e.key===key)this.jumpToPage()});
+});
+
+// Keep horizontal scroll at start for textareas (on paste/load/file upload)
+['normalizeInput','dupInput','importInput'].forEach(id=>{
+const el=document.getElementById(id);
+if(el){
+// Scroll to start on paste
+el.addEventListener('paste',(e)=>{
+setTimeout(()=>{el.scrollLeft=0},50);
+});
+// Intercept value setter to scroll to start when value is set programmatically (file upload)
+const valueProp=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');
+if(valueProp){
+const originalSet=valueProp.set;
+Object.defineProperty(el,'value',{
+set:function(val){
+originalSet.call(this,val);
+setTimeout(()=>{this.scrollLeft=0},50);
+},
+get:valueProp.get,
+configurable:true
+});
+}
+}
+});
+}
+
+async loadFilters(){
+try{
+const r=await fetch('/api/filters');
+const d=await r.json();
+if(d.success){
+const lists={brands:d.data.brands,types:d.data.types,categories:d.data.categories,countries:d.data.countries,issuers:d.data.issuers};
+['brands','types','categories','countries','issuers'].forEach(key=>{
+const datalist=document.getElementById(key+'-list');
+if(datalist)(lists[key]||[]).forEach(v=>{
+const opt=document.createElement('option');
+opt.value=v;
+datalist.appendChild(opt);
+});
+});
+
+const brandSelect=document.getElementById('cardBrandFilter');
+const typeSelect=document.getElementById('cardTypeFilter');
+const categorySelect=document.getElementById('cardCategoryFilter');
+const countrySelect=document.getElementById('cardCountryFilter');
+
+(lists.brands||[]).forEach(v=>{
+const opt=document.createElement('option');
+opt.value=v;
+opt.textContent=v;
+brandSelect.appendChild(opt);
+});
+
+(lists.types||[]).forEach(v=>{
+const opt=document.createElement('option');
+opt.value=v;
+opt.textContent=v;
+typeSelect.appendChild(opt);
+});
+
+(lists.categories||[]).forEach(v=>{
+const opt=document.createElement('option');
+opt.value=v;
+opt.textContent=v;
+categorySelect.appendChild(opt);
+});
+
+(lists.countries||[]).forEach(v=>{
+const opt=document.createElement('option');
+opt.value=v;
+opt.textContent=v;
+countrySelect.appendChild(opt);
+});
+}
+}catch(e){console.error('Load filters error:',e)}
+}
+
+getSearchParams(){
+const params={};
+const bin=document.getElementById('binInput').value.trim();
+if(bin)params.bin=bin.split(/[\\n,]/).filter(b=>b.trim()).join(',');
+['brand','type','category','country','issuer'].forEach(k=>{
+const v=document.getElementById(k+'Filter').value.trim();
+if(v)params[k]=v;
+});
+params.limit=parseInt(document.getElementById('limitInput').value)||50;
+params.offset=this.currentPage*params.limit;
+return params;
+}
+
+async search(){
+const btn=document.getElementById('searchBtn');
+const html=btn.innerHTML;
+btn.disabled=true;
+btn.innerHTML='<div class="loading inline-block mr-2"></div>Searching...';
+this.showLoading();
+try{
+const params=this.getSearchParams();
+const qs=new URLSearchParams(params).toString();
+const r=await fetch('/api/bin?'+qs);
+const d=await r.json();
+if(d.success){
+this.currentResults=d.data;
+this.displayResults();
+this.updatePagination(d.pagination);
+setTimeout(()=>document.getElementById('resultsBody').scrollIntoView({behavior:'smooth',block:'nearest'}),100);
+}
+}catch(e){this.showError('Search failed')}
+finally{btn.disabled=false;btn.innerHTML=html}
+}
+
+showLoading(){
+const tbody=document.getElementById('resultsBody');
+document.getElementById('noResults').classList.add('hidden');
+tbody.innerHTML=Array(5).fill(0).map(()=>'<tr>'+Array(6).fill(0).map(()=>'<td class="px-6 py-4"><div class="skeleton h-4 rounded w-full"></div></td>').join('')+'</tr>').join('');
+}
+
+displayResults(){
+const tbody=document.getElementById('resultsBody');
+const noResults=document.getElementById('noResults');
+if(this.currentResults.length===0){
+tbody.innerHTML='';
+noResults.classList.remove('hidden');
+return;
+}
+noResults.classList.add('hidden');
+tbody.innerHTML=this.currentResults.map((r,i)=>'<tr class="group hover:bg-gradient-to-r hover:from-indigo-100 hover:to-purple-100 border-b border-gray-300" style="animation:fadeIn .3s ease '+(i*.05)+'s both"><td class="px-6 py-4"><span class="font-mono text-indigo-600 font-bold group-hover:text-indigo-700">'+r.bin+'</span></td><td class="px-6 py-4"><div class="flex items-center gap-2"><i class="fas fa-credit-card text-gray-600 group-hover:text-blue-600"></i><span class="font-medium text-gray-900 group-hover:text-indigo-700">'+r.brand+'</span></div></td><td class="px-6 py-4"><span class="badge '+this.getTypeBadgeClass(r.type)+'"><i class="fas fa-tag"></i>'+r.type+'</span></td><td class="px-6 py-4 text-gray-700 group-hover:text-gray-900">'+(r.category||'-')+'</td><td class="px-6 py-4 text-gray-700 group-hover:text-gray-900">'+r.issuer+'</td><td class="px-6 py-4"><span class="px-3 py-1.5 glass rounded-lg text-xs font-mono font-semibold text-gray-700"><i class="fas fa-flag mr-1"></i>'+r.country+'</span></td></tr>').join('');
+}
+
+getTypeBadgeClass(type){
+switch(type?.toUpperCase()){
+case 'CREDIT':return 'badge-credit';
+case 'DEBIT':return 'badge-debit';
+case 'PREPAID':return 'badge-prepaid';
+default:return 'badge-default';
+}
+}
+
+updatePagination(p){
+const start=p.offset+1;
+const end=Math.min(p.offset+p.limit,p.total);
+document.getElementById('showingCount').textContent=start+'-'+end;
+document.getElementById('totalCount').textContent=p.total;
+const totalPages=Math.max(1,Math.ceil(p.total/p.limit));
+const currentPage=Math.floor(p.offset/p.limit)+1;
+const container=document.getElementById('pageNumbers');
+container.innerHTML='';
+const addBtn=i=>{
+const btn=document.createElement('button');
+btn.textContent=String(i);
+btn.className=(i===currentPage?'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg':'glass text-gray-700')+' px-4 py-2 rounded-lg text-sm font-semibold hover-lift';
+btn.onclick=()=>{this.currentPage=i-1;this.search()};
+container.appendChild(btn);
+};
+const addEllipsis=()=>{
+const span=document.createElement('span');
+span.textContent='...';
+span.className='px-2 text-gray-600';
+container.appendChild(span);
+};
+const addRange=(s,e)=>{for(let i=s;i<=e;i++)addBtn(i)};
+if(totalPages<=10){
+addRange(1,totalPages);
+}else{
+addRange(1,Math.min(5,totalPages));
+if(currentPage>7)addEllipsis();
+const midStart=Math.max(currentPage-2,6);
+const midEnd=Math.min(currentPage+2,totalPages-5);
+if(midStart<=midEnd)addRange(midStart,midEnd);
+if(currentPage<totalPages-6)addEllipsis();
+addRange(Math.max(totalPages-4,6),totalPages);
+}
+const prevBtn=document.getElementById('prevBtn');
+const nextBtn=document.getElementById('nextBtn');
+prevBtn.disabled=currentPage===1;
+nextBtn.disabled=currentPage===totalPages;
+prevBtn.classList.toggle('opacity-50',prevBtn.disabled);
+prevBtn.classList.toggle('cursor-not-allowed',prevBtn.disabled);
+nextBtn.classList.toggle('opacity-50',nextBtn.disabled);
+nextBtn.classList.toggle('cursor-not-allowed',nextBtn.disabled);
+}
+
+previousPage(){if(this.currentPage>0){this.currentPage--;this.search()}}
+nextPage(){this.currentPage++;this.search()}
+jumpToPage(){
+const val=parseInt(document.getElementById('pageJumpInput').value);
+if(!isNaN(val)&&val>=1){
+this.currentPage=val-1;
+this.search();
+document.getElementById('pageJumpInput').value='';
+}
+}
+
+clearFilters(){
+document.getElementById('binInput').value='';
+document.getElementById('binCounter').textContent='374788';
+['brandFilter','typeFilter','categoryFilter','countryFilter','issuerFilter'].forEach(id=>{
+const el=document.getElementById(id);
+if(el)el.value='';
+});
+document.getElementById('limitInput').value='10';
+this.currentPage=0;
+this.search();
+}
+
+
+async loadDashboard(force=false){
+const content=document.getElementById('dashContent');
+if(!force&&content.innerHTML.includes('grid'))return;
+content.innerHTML='<div class="text-center py-8"><div class="loading inline-block"></div></div>';
+try{
+const r=await fetch('/api/dashboard');
+const d=await r.json();
+if(d.success){
+const s=d.data;
+const topBrands=s.brands&&s.brands.length>0?s.brands.slice(0,10):[];
+const topCountries=s.countries&&s.countries.length>0?s.countries.slice(0,10):[];
+const topTypes=s.types&&s.types.length>0?s.types.slice(0,10):[];
+const topCategories=s.categories&&s.categories.length>0?s.categories.slice(0,10):[];
+const topBins=s.topBins&&s.topBins.length>0?s.topBins.slice(0,10):[];
+content.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4"><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-database text-3xl text-indigo-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.totalRecords.toLocaleString()+'</div><div class="text-sm text-gray-600">Total BINs</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-credit-card text-3xl text-blue-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.totalCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Total Cards</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-check-circle text-3xl text-green-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.liveCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Live Cards</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-times-circle text-3xl text-red-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+s.dieCards.toLocaleString()+'</div><div class="text-sm text-gray-600">Expired</div></div></div><div class="grid grid-cols-1 md:grid-cols-3 gap-4"><div class="glass p-4 rounded-xl hover-lift"><h3 class="font-bold mb-3 flex items-center gap-2 text-gray-900"><i class="fas fa-credit-card text-blue-600"></i>Top 10 Brands</h3><div class="space-y-2">'+(topBrands.length>0?topBrands.map(b=>'<div class="flex items-center justify-between"><span class="font-semibold text-gray-900">'+b.brand+'</span><span class="text-sm text-gray-600">'+b.count.toLocaleString()+'</span></div>').join(''):'<div class="text-gray-600 text-center">No data</div>')+'</div></div><div class="glass p-4 rounded-xl hover-lift"><h3 class="font-bold mb-3 flex items-center gap-2 text-gray-900"><i class="fas fa-globe text-green-600"></i>Top 10 Countries</h3><div class="space-y-2">'+(topCountries.length>0?topCountries.map(c=>'<div class="flex items-center justify-between"><span class="font-semibold font-mono text-gray-900">'+c.country+'</span><span class="text-sm text-gray-600">'+c.count.toLocaleString()+'</span></div>').join(''):'<div class="text-gray-600 text-center">No data</div>')+'</div></div><div class="glass p-4 rounded-xl hover-lift"><h3 class="font-bold mb-3 flex items-center gap-2 text-gray-900"><i class="fas fa-tag text-purple-600"></i>Top 10 Types</h3><div class="space-y-2">'+(topTypes.length>0?topTypes.map(t=>'<div class="flex justify-between items-center"><span class="badge '+this.getTypeBadgeClass(t.type)+'"><i class="fas fa-tag"></i>'+t.type+'</span><span class="font-bold text-gray-900">'+t.count.toLocaleString()+'</span></div>').join(''):'<div class="text-gray-600 text-center">No data</div>')+'</div></div><div class="glass p-4 rounded-xl hover-lift"><h3 class="font-bold mb-3 flex items-center gap-2 text-gray-900"><i class="fas fa-layer-group text-cyan-600"></i>Top 10 Categories</h3><div class="space-y-2">'+(topCategories.length>0?topCategories.map(cat=>'<div class="flex justify-between items-center"><span class="font-semibold text-gray-900">'+cat.category+'</span><span class="font-bold text-gray-900">'+cat.count.toLocaleString()+'</span></div>').join(''):'<div class="text-gray-600 text-center">No data</div>')+'</div></div><div class="glass p-4 rounded-xl hover-lift"><h3 class="font-bold mb-3 flex items-center gap-2 text-gray-900"><i class="fas fa-hashtag text-yellow-600"></i>Top 10 BINs</h3><div class="space-y-2">'+(topBins.length>0?topBins.map(b=>'<div class="flex justify-between"><span class="font-mono text-indigo-600">'+b.Bin+'</span><span class="text-gray-600">'+b.count.toLocaleString()+'</span></div>').join(''):'<div class="text-gray-600 text-center">No data</div>')+'</div></div></div>';
+}
+}catch(e){
+content.innerHTML='<div class="text-center text-red-400">Failed to load dashboard</div>';
+}
+}
+
+copyBinsList(){
+try{
+if(!this.currentResults||this.currentResults.length===0){
+this.showError('No BINs to copy');
+return;
+}
+const binsList=this.currentResults.map(r=>r.bin).join('\\n');
+navigator.clipboard.writeText(binsList).then(()=>{
+this.showSuccess('Copied '+this.currentResults.length+' BINs to clipboard');
+}).catch(()=>{
+const textarea=document.createElement('textarea');
+textarea.value=binsList;
+document.body.appendChild(textarea);
+textarea.select();
+document.execCommand('copy');
+document.body.removeChild(textarea);
+this.showSuccess('Copied '+this.currentResults.length+' BINs to clipboard');
+});
+}catch(e){this.showError('Copy failed')}
+}
+
+async searchBinsForExport(){
+const btn=document.getElementById('searchBinsBtn');
+const html=btn.innerHTML;
+btn.disabled=true;
+btn.innerHTML='<div class="loading inline-block mr-2"></div>Searching...';
+
+try{
+const status=[];
+if(document.getElementById('statusUnknown').checked)status.push('unknown');
+if(document.getElementById('statusLive').checked)status.push('1');
+if(document.getElementById('statusCT').checked)status.push('2');
+if(document.getElementById('statusDie').checked)status.push('0');
+
+if(status.length===0){
+this.showError('Please select at least one status');
+return;
+}
+
+const params={
+brand:document.getElementById('cardBrandFilter').value||null,
+type:document.getElementById('cardTypeFilter').value||null,
+category:document.getElementById('cardCategoryFilter').value||null,
+country:document.getElementById('cardCountryFilter').value||null,
+issuer:document.getElementById('cardIssuerFilter').value.trim()||null,
+minCards:parseInt(document.getElementById('minCardsInput').value)||10,
+maxBins:parseInt(document.getElementById('maxBinsInput').value)||10000,
+status
+};
+
+const r=await fetch('/api/search-bins',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify(params)
+});
+
+const d=await r.json();
+if(d.success){
+this.cardExporter.bins=d.bins;
+this.displayBinResults(d.bins);
+document.getElementById('cardResultsSection').classList.remove('hidden');
+document.getElementById('exportOptionsSection').classList.remove('hidden');
+this.showSuccess('Found '+d.bins.length+' BINs');
+}else{
+this.showError(d.error||'Search failed');
+}
+}catch(e){
+this.showError('Search failed: '+e.message);
+}finally{
+btn.disabled=false;
+btn.innerHTML=html;
+}
+}
+
+displayBinResults(bins){
+const totalCards=bins.reduce((sum,b)=>sum+b.cardCount,0);
+document.getElementById('foundBinsCount').textContent=bins.length;
+document.getElementById('totalCardsCount').textContent=totalCards.toLocaleString();
+
+const tbody=document.getElementById('cardResultsBody');
+tbody.innerHTML=bins.map((b,i)=>'<tr class="group hover:bg-gradient-to-r hover:from-indigo-100 hover:to-purple-100 border-b border-gray-300" style="animation:fadeIn .3s ease '+(i*.02)+'s both"><td class="px-6 py-4"><span class="font-mono text-indigo-600 font-bold">'+b.bin+'</span></td><td class="px-6 py-4 text-gray-900">'+b.brand+'</td><td class="px-6 py-4"><span class="badge '+this.getTypeBadgeClass(b.type)+'">'+b.type+'</span></td><td class="px-6 py-4 text-gray-900">'+(b.category||'-')+'</td><td class="px-6 py-4"><span class="font-mono text-gray-900">'+b.country+'</span></td><td class="px-6 py-4"><span class="font-bold text-gray-900">'+b.cardCount.toLocaleString()+'</span></td><td class="px-6 py-4"><div class="flex items-center gap-2"><div class="w-24 h-2 bg-gray-200 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-green-500 to-emerald-500" style="width:'+(b.liveRate*100).toFixed(0)+'%"></div></div><span class="text-sm font-semibold text-gray-900">'+(b.liveRate*100).toFixed(0)+'%</span></div></td></tr>').join('');
+}
+
+async startExport(){
+if(this.cardExporter.bins.length===0){
+this.showError('No BINs to export');
+return;
+}
+
+const cardsPerBin=Math.min(parseInt(document.getElementById('cardsPerBinInput').value)||50,100);
+const includeInfo=document.querySelector('input[name="exportFormat"]:checked').value==='withinfo';
+const status=[];
+if(document.getElementById('statusUnknown').checked)status.push('unknown');
+if(document.getElementById('statusLive').checked)status.push('1');
+if(document.getElementById('statusCT').checked)status.push('2');
+if(document.getElementById('statusDie').checked)status.push('0');
+
+this.cardExporter.cancelExport=false;
+document.getElementById('exportProgressSection').classList.remove('hidden');
+document.getElementById('exportResultSection').classList.add('hidden');
+document.getElementById('exportProgressFill').style.width='0%';
+document.getElementById('exportedCardsCount').textContent='0';
+document.getElementById('exportTime').textContent='0';
+document.getElementById('exportSpeed').textContent='0';
+
+const startTime=Date.now();
+const allCards=[];
+const BATCH_SIZE=10;
+
+try{
+for(let i=0;i<this.cardExporter.bins.length;i+=BATCH_SIZE){
+if(this.cardExporter.cancelExport){
+this.showError('Export cancelled');
+return;
+}
+
+const batch=this.cardExporter.bins.slice(i,Math.min(i+BATCH_SIZE,this.cardExporter.bins.length));
+const batchBins=batch.map(b=>b.bin);
+
+const r=await fetch('/api/export-cards',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({bins:batchBins,cardsPerBin,status,includeInfo})
+});
+
+const d=await r.json();
+if(d.success){
+allCards.push(...d.cards);
+
+const progress=((i+batch.length)/this.cardExporter.bins.length*100).toFixed(0);
+const elapsed=Math.floor((Date.now()-startTime)/1000);
+const totalCardsExported=allCards.filter(c=>!c.startsWith('#')&&c.trim()).length;
+const speed=elapsed>0?Math.floor(totalCardsExported/elapsed):0;
+
+document.getElementById('exportProgressFill').style.width=progress+'%';
+document.getElementById('exportProgressText').textContent='Processing '+(i+batch.length)+'/'+this.cardExporter.bins.length+' BINs';
+document.getElementById('exportedCardsCount').textContent=totalCardsExported;
+document.getElementById('exportTime').textContent=elapsed;
+document.getElementById('exportSpeed').textContent=speed;
+}else{
+this.showError('Batch export failed: '+d.error);
+}
+
+if(i+BATCH_SIZE<this.cardExporter.bins.length){
+await new Promise(resolve=>setTimeout(resolve,100));
+}
+}
+
+document.getElementById('exportOutput').value=allCards.join('\\n');
+document.getElementById('exportResultSection').classList.remove('hidden');
+document.getElementById('exportProgressSection').classList.add('hidden');
+
+const totalCards=allCards.filter(c=>!c.startsWith('#')&&c.trim()).length;
+this.showSuccess('Exported '+totalCards.toLocaleString()+' cards from '+this.cardExporter.bins.length+' BINs');
+}catch(e){
+this.showError('Export failed: '+e.message);
+document.getElementById('exportProgressSection').classList.add('hidden');
+}
+}
+
+cancelExport(){
+this.cardExporter.cancelExport=true;
+document.getElementById('exportProgressSection').classList.add('hidden');
+}
+
+downloadExport(){
+const content=document.getElementById('exportOutput').value;
+if(!content){
+this.showError('Nothing to download');
+return;
+}
+const blob=new Blob([content],{type:'text/plain'});
+const url=URL.createObjectURL(blob);
+const a=document.createElement('a');
+a.href=url;
+a.download='cards_export_'+Date.now()+'.txt';
+a.click();
+URL.revokeObjectURL(url);
+this.showSuccess('Download started');
+}
+
+clearCardFilters(){
+document.getElementById('cardBrandFilter').value='';
+document.getElementById('cardTypeFilter').value='';
+document.getElementById('cardCategoryFilter').value='';
+document.getElementById('cardCountryFilter').value='';
+document.getElementById('cardIssuerFilter').value='';
+document.getElementById('minCardsInput').value='10';
+document.getElementById('cardsPerBinInput').value='50';
+document.getElementById('maxBinsInput').value='10000';
+document.getElementById('statusUnknown').checked=true;
+document.getElementById('statusLive').checked=true;
+document.getElementById('statusCT').checked=true;
+document.getElementById('statusDie').checked=false;
+document.getElementById('cardResultsSection').classList.add('hidden');
+document.getElementById('exportOptionsSection').classList.add('hidden');
+document.getElementById('exportResultSection').classList.add('hidden');
+this.cardExporter.bins=[];
+}
+
+async normalize(){
+const input=document.getElementById('normalizeInput').value.trim();
+if(!input)return this.showError('Please enter cards');
+const lines=input.split('\\n').filter(l=>l.trim());
+if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');
+
+const btn=document.getElementById('normalizeBtn');
+const html=btn.innerHTML;
+btn.disabled=true;
+btn.innerHTML='<div class="loading inline-block mr-2"></div>Processing...';
+
+try{
+const filterExpired=document.getElementById('filterExpiredCheck').checked;
+const r=await fetch('/api/normalize',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({cards:lines,filterExpired})
+});
+const d=await r.json();
+
+if(d.success){
+document.getElementById('normValid').textContent=d.data.validCount;
+document.getElementById('normError').textContent=d.data.errorCount;
+
+document.getElementById('normalizeOutput').value=d.data.valid.join('\\n');
+document.getElementById('normalizeResult').classList.remove('hidden');
+
+if(d.data.errorCount>0){
+document.getElementById('normalizeErrors').value=d.data.errors.join('\\n');
+document.getElementById('normErrorSection').classList.remove('hidden');
+}else{
+document.getElementById('normErrorSection').classList.add('hidden');
+}
+
+this.showSuccess('Normalized '+d.data.validCount+' cards');
+}
+}catch(e){
+this.showError('Normalize failed');
+}finally{
+btn.disabled=false;
+btn.innerHTML=html;
+}
+}
+
+handleDupFileUpload(e){
+const file=e.target.files[0];
+if(!file)return;
+if(!file.name.endsWith('.txt')){
+this.showError('Please select a .txt file');
+return;
+}
+const reader=new FileReader();
+reader.onload=(event)=>{
+const content=event.target.result;
+document.getElementById('dupInput').value=content;
+const lines=content.split('\\n').filter(l=>l.trim());
+document.getElementById('dupCount').textContent=lines.length;
+this.showSuccess('Loaded '+lines.length+' cards from file');
+};
+reader.readAsText(file);
+e.target.value='';
+}
+
+async checkDup(){
+const input=document.getElementById('dupInput').value.trim();
+if(!input)return this.showError('Please enter cards');
+const lines=input.split('\\n').filter(l=>l.trim());
+
+const btn=document.getElementById('dupBtn');
+const html=btn.innerHTML;
+btn.disabled=true;
+btn.innerHTML='<div class="loading inline-block mr-2"></div>Checking...';
+
+const BATCH_SIZE=1000;
+let allUnique=[];
+let allDuplicates=[];
+
+document.getElementById('dupProgress').classList.remove('hidden');
+
+try{
+for(let i=0;i<lines.length;i+=BATCH_SIZE){
+const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));
+
+const progress=Math.round(((i+batch.length)/lines.length)*100);
+document.getElementById('dupProgressFill').style.width=progress+'%';
+document.getElementById('dupProgressText').textContent='Processing '+(i+batch.length)+' / '+lines.length+'...';
+
+const r=await fetch('/api/check-duplicates',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({cards:batch})
+});
+
+if(!r.ok){
+const errorText=await r.text();
+console.error('API Error:',errorText);
+throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));
+}
+
+const d=await r.json();
+
+if(d.success){
+allUnique.push(...d.data.unique);
+allDuplicates.push(...d.data.duplicates);
+}else{
+throw new Error(d.error||'Unknown error');
+}
+
+if(i+BATCH_SIZE<lines.length){
+await new Promise(resolve=>setTimeout(resolve,100));
+}
+}
+
+document.getElementById('dupProgressFill').style.width='100%';
+document.getElementById('dupProgressText').textContent='Complete!';
+
+setTimeout(()=>{
+document.getElementById('dupProgress').classList.add('hidden');
+},1000);
+
+document.getElementById('dupTotal').textContent=lines.length;
+document.getElementById('dupUnique').textContent=allUnique.length;
+document.getElementById('dupDup').textContent=allDuplicates.length;
+
+document.getElementById('dupOutput').value=allUnique.join('\\n');
+document.getElementById('dupResult').classList.remove('hidden');
+
+if(allDuplicates.length>0){
+document.getElementById('dupDupOutput').value=allDuplicates.join('\\n');
+document.getElementById('dupDupSection').classList.remove('hidden');
+}else{
+document.getElementById('dupDupSection').classList.add('hidden');
+}
+
+this.showSuccess('Found '+allUnique.length+' unique cards');
+}catch(e){
+console.error('Check duplicates error:',e);
+document.getElementById('dupProgress').classList.add('hidden');
+this.showError('Check failed: '+e.message);
+}finally{
+btn.disabled=false;
+btn.innerHTML=html;
+}
+}
+
+handleFileUpload(e){
+const file=e.target.files[0];
+if(!file)return;
+if(!file.name.endsWith('.txt')){
+this.showError('Please select a .txt file');
+return;
+}
+const reader=new FileReader();
+reader.onload=(event)=>{
+const content=event.target.result;
+document.getElementById('importInput').value=content;
+const lines=content.split('\\n').filter(l=>l.trim());
+document.getElementById('importCount').textContent=lines.length;
+this.showSuccess('Loaded '+lines.length+' cards from file');
+};
+reader.readAsText(file);
+e.target.value='';
+}
+
+async import(){
+const input=document.getElementById('importInput').value.trim();
+if(!input)return this.showError('Please enter cards');
+const lines=input.split('\\n').filter(l=>l.trim());
+if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');
+
+if(!confirm('Import '+lines.length.toLocaleString()+' cards to database?\\n\\nThis action cannot be undone.'))return;
+
+const btn=document.getElementById('importBtn');
+const html=btn.innerHTML;
+btn.disabled=true;
+btn.innerHTML='<div class="loading inline-block mr-2"></div>Importing...';
+
+const BATCH_SIZE=1000;
+let totalImported=0;
+let totalErrors=0;
+const allErrors=[];
+
+document.getElementById('importProgress').classList.remove('hidden');
+
+try{
+for(let i=0;i<lines.length;i+=BATCH_SIZE){
+const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));
+
+const progress=Math.round(((i+batch.length)/lines.length)*100);
+document.getElementById('importProgressFill').style.width=progress+'%';
+document.getElementById('importProgressText').textContent='Importing '+(i+batch.length)+' / '+lines.length+' cards...';
+
+const r=await fetch('/api/import',{
+method:'POST',
+headers:{'Content-Type':'application/json'},
+body:JSON.stringify({cards:batch})
+});
+
+if(!r.ok){
+const errorText=await r.text();
+console.error('API Error:',errorText);
+throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));
+}
+
+const d=await r.json();
+
+if(d.success){
+totalImported+=d.data.imported||0;
+totalErrors+=d.data.errorCount||0;
+if(d.data.errors&&d.data.errors.length>0){
+allErrors.push(...d.data.errors);
+}
+}else{
+throw new Error(d.error||'Unknown error');
+}
+
+if(i+BATCH_SIZE<lines.length){
+await new Promise(resolve=>setTimeout(resolve,50));
+}
+}
+
+document.getElementById('importProgressFill').style.width='100%';
+document.getElementById('importProgressText').textContent='Complete!';
+
+setTimeout(()=>{
+document.getElementById('importProgress').classList.add('hidden');
+},1000);
+
+document.getElementById('impSuccess').textContent=totalImported;
+document.getElementById('impError').textContent=totalErrors;
+document.getElementById('importStats').classList.remove('hidden');
+
+if(totalErrors>0){
+document.getElementById('importErrors').value=allErrors.join('\\n');
+document.getElementById('impErrorSection').classList.remove('hidden');
+}else{
+document.getElementById('impErrorSection').classList.add('hidden');
+}
+
+this.showSuccess('Successfully imported '+totalImported.toLocaleString()+' cards');
+this.loadDashboard(true);
+}catch(e){
+console.error('Import error:',e);
+document.getElementById('importProgress').classList.add('hidden');
+this.showError('Import failed: '+e.message);
+}finally{
+btn.disabled=false;
+btn.innerHTML=html;
+}
+}
+
+copy(id){
+const el=document.getElementById(id);
+if(!el.value)return this.showError('Nothing to copy');
+el.select();
+document.execCommand('copy');
+this.showSuccess('Copied to clipboard');
+}
+
+showError(msg){
+const t=document.createElement('div');
+t.className='fixed top-20 right-4 glass p-4 rounded-xl shadow-2xl z-50 fade-in';
+t.innerHTML='<div class="flex items-center gap-3"><i class="fas fa-exclamation-circle text-red-600 text-xl"></i><div><div class="font-semibold text-red-600">Error</div><div class="text-sm text-gray-700">'+msg+'</div></div></div>';
+document.body.appendChild(t);
+setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},4000);
+}
+
+showSuccess(msg){
+const t=document.createElement('div');
+t.className='fixed top-20 right-4 glass p-4 rounded-xl shadow-2xl z-50 fade-in';
+t.innerHTML='<div class="flex items-center gap-3"><i class="fas fa-check-circle text-green-600 text-xl"></i><div><div class="font-semibold text-green-600">Success</div><div class="text-sm text-gray-700">'+msg+'</div></div></div>';
+document.body.appendChild(t);
+setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3000);
+}
+}
+
+const binLookup=new BINLookup();
+
+// Realtime card counter for textareas
+function updateCardCount(textareaId,countId){
+const textarea=document.getElementById(textareaId);
+const countEl=document.getElementById(countId);
+if(!textarea||!countEl)return;
+textarea.addEventListener('input',function(){
+const lines=this.value.trim().split('\\n').filter(l=>l.trim());
+countEl.textContent=lines.length.toLocaleString();
+});
+}
+
+updateCardCount('normalizeInput','normalizeCount');
+updateCardCount('dupInput','dupCount');
+updateCardCount('importInput','importCount');
+
+document.addEventListener('keydown',e=>{
+if((e.ctrlKey||e.metaKey)&&e.key==='k'){
+e.preventDefault();
+document.getElementById('binInput').focus();
+}
+});
+</script>
+</body>
+</html>`;
+}
+
+export { index_default as default };
