@@ -111,6 +111,9 @@ body{padding-top:60px}
 <a href="https://gencard.minhvu-vng.workers.dev" target="_blank" class="gen-btn">
 <span class="icon">🔗</span><span class="text">Gen Data</span>
 </a>
+<button id="logoutBtn" class="ml-2 px-4 py-2 text-sm font-semibold text-red-500 bg-red-50 rounded-lg hover:bg-red-100 transition-colors">
+<i class="fas fa-sign-out-alt mr-1"></i>Logout
+</button>
 </div>
 </nav>
 
