@@ -4,11 +4,12 @@ export function getHTML() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BIN Database System</title>
+<title>BC DATA</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 512 512%22><path fill=%22%234A8BFF%22 d=%22M448 80v48c0 44.2-100.3 80-224 80S0 172.2 0 128V80C0 35.8 100.3 0 224 0S448 35.8 448 80zM393.2 214.7c20.8-7.4 39.9-16.9 54.8-28.6V288c0 44.2-100.3 80-224 80S0 332.2 0 288V186.1c14.9 11.8 34 21.2 54.8 28.6C99.7 230.7 159.5 240 224 240s124.3-9.3 169.2-25.3zM0 346.1c14.9 11.8 34 21.2 54.8 28.6C99.7 390.7 159.5 400 224 400s124.3-9.3 169.2-25.3c20.8-7.4 39.9-16.9 54.8-28.6V432c0 44.2-100.3 80-224 80S0 476.2 0 432V346.1z%22/></svg>">
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="/app2.js?v=5" defer></script>
+<script src="/app2.js?v=6" defer></script>
 <style>
 html{overflow-y:scroll}
 *{transition:all .2s ease;font-family:'Inter',sans-serif}
@@ -518,10 +519,10 @@ Check Duplicates
 <div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="dupCount">0</b></div>
 <div class="flex gap-2">
 <input type="file" id="dupFileInput" accept=".txt" class="hidden">
-<button id="dupFileBtn" class="px-4 py-2 glass rounded-lg font-semibold hover-lift text-sm">
+<button id="dupFileBtn" class="px-6 py-2.5 glass rounded-xl font-bold hover-lift text-sm">
 <i class="fas fa-file-upload mr-1"></i>file.txt
 </button>
-<button id="dupBtn" class="px-4 py-2 btn-primary rounded-lg font-semibold hover-lift text-sm">
+<button id="dupBtn" class="px-6 py-2.5 btn-primary rounded-xl font-bold hover-lift text-sm">
 <i class="fas fa-search mr-1"></i>Check
 </button>
 </div>
@@ -564,10 +565,10 @@ Import to Database
 <div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="importCount">0</b></div>
 <div class="flex gap-2">
 <input type="file" id="importFileInput" accept=".txt" class="hidden">
-<button id="importFileBtn" class="px-4 py-2 glass rounded-lg font-semibold hover-lift text-sm">
+<button id="importFileBtn" class="px-6 py-2.5 glass rounded-xl font-bold hover-lift text-sm">
 <i class="fas fa-file-upload mr-1"></i>file.txt
 </button>
-<button id="importBtn" class="px-4 py-2 btn-primary rounded-lg font-semibold hover-lift text-sm">
+<button id="importBtn" class="px-6 py-2.5 btn-primary rounded-xl font-bold hover-lift text-sm">
 <i class="fas fa-upload mr-1"></i>Import
 </button>
 </div>

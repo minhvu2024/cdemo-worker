@@ -35,13 +35,20 @@ export default {
           let html = getHTML();
           const grid = `<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4"><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-database text-3xl text-indigo-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">${(s.totalRecords||0).toLocaleString()}</div><div class="text-sm text-gray-600">Total BINs</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-credit-card text-3xl text-blue-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">${(s.totalCards||0).toLocaleString()}</div><div class="text-sm text-gray-600">Total Cards</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-check-circle text-3xl text-green-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">${(s.liveCards||0).toLocaleString()}</div><div class="text-sm text-gray-600">Live Cards</div></div><div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-times-circle text-3xl text-red-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">${(s.dieCards||0).toLocaleString()}</div><div class="text-sm text-gray-600">Expired</div></div></div>`;
           html = html.replace('<div id="dashContent">\n<div class="text-center py-8"><div class="loading inline-block"></div></div>\n</div>', `<div id="dashContent">${grid}</div>`);
-          return new Response(html, { headers: { "Content-Type": "text/html", "Cache-Control": "no-store, no-cache, must-revalidate" } });
+          return new Response(html, { headers: { 
+            "Content-Type": "text/html", 
+            "Cache-Control": "no-store, no-cache, must-revalidate", 
+            "Link": "</app2.js?v=6>; rel=preload; as=script, <https://cdn.tailwindcss.com>; rel=preconnect, <https://cdnjs.cloudflare.com>; rel=preconnect, <https://fonts.googleapis.com>; rel=preconnect" 
+          } });
         } catch {
-          return new Response(getHTML(), { headers: { "Content-Type": "text/html" } });
+          return new Response(getHTML(), { headers: { 
+            "Content-Type": "text/html", 
+            "Link": "</app2.js?v=6>; rel=preload; as=script, <https://cdn.tailwindcss.com>; rel=preconnect, <https://cdnjs.cloudflare.com>; rel=preconnect, <https://fonts.googleapis.com>; rel=preconnect" 
+          } });
         }
       }
       if (path === "/app.js") return new Response(getAppJs(), { headers: { "Content-Type": "application/javascript" } });
-      if (path === "/app2.js") return new Response(getApp2Js(), { headers: { "Content-Type": "application/javascript", "Cache-Control": "no-store, no-cache, must-revalidate" } });
+      if (path === "/app2.js") return new Response(getApp2Js(), { headers: { "Content-Type": "application/javascript", "Cache-Control": "public, max-age=31536000, immutable" } });
       if (path === "/api/bin") return router.search(request);
       if (path === "/api/bin/export") return router.export(request);
       if (path === "/api/stats") return router.stats();
