@@ -12,9 +12,58 @@ const CACHE_TTL = {
 };
 
 export class Router {
-  constructor(db, kv) {
+  constructor(db, kv, env) {
     this.db = new DatabaseService(db);
     this.cache = new CacheService(kv);
+    this.env = env;
+    this.SECRET = "s3cr3t_k3y_ch4ng3_m3"; // Nên đưa vào env
+  }
+
+  async login(request) {
+    try {
+      const { username, password } = await request.json();
+      if (username === "cchecker" && password === "Hgl@555@") {
+        const token = await this.signToken({ sub: username, exp: Math.floor(Date.now()/1000) + 86400 }); // 24h
+        return this.json({ success: true, token });
+      }
+      return this.json({ success: false, error: "Invalid credentials" }, 401);
+    } catch (e) {
+      return this.json({ success: false, error: "Login failed" }, 400);
+    }
+  }
+
+  async verifyAuth(request) {
+    const auth = request.headers.get("Authorization");
+    if (!auth || !auth.startsWith("Bearer ")) return false;
+    const token = auth.split(" ")[1];
+    return await this.verifyToken(token);
+  }
+
+  async signToken(payload) {
+    const header = { alg: "HS256", typ: "JWT" };
+    const encodedHeader = btoa(JSON.stringify(header));
+    const encodedPayload = btoa(JSON.stringify(payload));
+    const data = `${encodedHeader}.${encodedPayload}`;
+    const signature = await this.hmacSha256(data, this.SECRET);
+    return `${data}.${signature}`;
+  }
+
+  async verifyToken(token) {
+    try {
+      const [h, p, s] = token.split(".");
+      const signature = await this.hmacSha256(`${h}.${p}`, this.SECRET);
+      if (signature !== s) return false;
+      const payload = JSON.parse(atob(p));
+      if (payload.exp < Math.floor(Date.now()/1000)) return false;
+      return true;
+    } catch { return false; }
+  }
+
+  async hmacSha256(msg, secret) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sign = await crypto.subtle.sign("HMAC", key, enc.encode(msg));
+    return btoa(String.fromCharCode(...new Uint8Array(sign))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
   json(data, status = 200) {
     return new Response(JSON.stringify(data), {
@@ -255,8 +304,6 @@ export class Router {
   }
   async rebuildStats(request, env) {
     try {
-      const token = request.headers.get('X-Admin-Token') || '';
-      if (!env || !env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) return this.json({ success: false, error: "Unauthorized" }, 401);
       const ok1 = await this.db.buildBinCardStats();
       // country_stats table removed, no need to rebuild
       await Promise.all([

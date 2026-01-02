@@ -8,11 +8,93 @@ class BINLookup{
     this.filters={};
     this.cardExporter={bins:[],cancelExport:false};
     this.sortConfig={type:null,col:null,asc:true};
+    this.token = localStorage.getItem('token');
     this.init();
   }
-  async init(){await this.loadFilters();this.setupEventListeners();this.loadDashboard(true);}
+  
+  async init(){
+    if(this.token){
+      this.showMain();
+      await this.loadFilters();
+      this.loadDashboard(true);
+    } else {
+      this.showLogin();
+    }
+    this.setupEventListeners();
+  }
+
+  showLogin(){
+    document.getElementById('loginSection').classList.remove('hidden');
+    document.getElementById('mainNav').classList.add('hidden');
+    document.getElementById('mainContent').classList.add('hidden');
+  }
+
+  showMain(){
+    document.getElementById('loginSection').classList.add('hidden');
+    document.getElementById('mainNav').classList.remove('hidden');
+    document.getElementById('mainContent').classList.remove('hidden');
+  }
+
+  async fetchAPI(url, options={}){
+    options.headers = options.headers || {};
+    if(this.token) options.headers['Authorization'] = 'Bearer ' + this.token;
+    
+    const r = await fetch(url, options);
+    if(r.status === 401){
+      this.logout();
+      throw new Error("Unauthorized");
+    }
+    return r;
+  }
+
+  logout(){
+    this.token = null;
+    localStorage.removeItem('token');
+    this.showLogin();
+  }
+
+  async doLogin(e){
+    e.preventDefault();
+    const u = document.getElementById('username').value;
+    const p = document.getElementById('password').value;
+    const btn = e.target.querySelector('button');
+    const err = document.getElementById('loginError');
+    
+    btn.disabled = true;
+    btn.innerHTML = '<div class="loading inline-block mr-2"></div>Logging in...';
+    err.classList.add('hidden');
+
+    try {
+      const r = await fetch('/api/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: u, password: p})
+      });
+      const d = await r.json();
+      if(d.success){
+        this.token = d.token;
+        localStorage.setItem('token', d.token);
+        this.showMain();
+        this.loadFilters();
+        this.loadDashboard(true);
+      } else {
+        err.textContent = d.error || 'Login failed';
+        err.classList.remove('hidden');
+      }
+    } catch(e) {
+      err.textContent = 'Network error';
+      err.classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = 'Login';
+    }
+  }
+
   setupEventListeners(){
     const safe=(id,ev,fn)=>{const el=document.getElementById(id);if(el)el.addEventListener(ev,fn)};
+    
+    safe('loginForm', 'submit', (e)=>this.doLogin(e));
+
     document.querySelectorAll('.tab-btn').forEach(btn=>{
       btn.addEventListener('click',()=>{
         document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
@@ -30,7 +112,7 @@ class BINLookup{
     safe('prevBtn','click',()=>this.previousPage());
     safe('nextBtn','click',()=>this.nextPage());
     safe('pageJumpBtn','click',()=>this.jumpToPage());
-    safe('refreshDash','click',()=>this.loadDashboard(true));
+    safe('updateDataBtn','click',()=>this.updateData());
     safe('normalizeBtn','click',()=>this.normalize());
     safe('copyNorm','click',()=>this.copy('normalizeOutput'));
     safe('dupBtn','click',()=>this.checkDup());
@@ -66,14 +148,13 @@ class BINLookup{
       }
     });
   }
-  async loadFilters(){try{const r=await fetch('/api/filters');const d=await r.json();if(d.success){const lists={brands:d.data.brands,types:d.data.types,categories:d.data.categories,countries:d.data.countries,issuers:d.data.issuers};['brands','types','categories','countries','issuers'].forEach(key=>{const datalist=document.getElementById(key+'-list');if(datalist)(lists[key]||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;datalist.appendChild(opt);});});const brandSelect=document.getElementById('cardBrandFilter');const typeSelect=document.getElementById('cardTypeFilter');const categorySelect=document.getElementById('cardCategoryFilter');const countrySelect=document.getElementById('cardCountryFilter');(lists.brands||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;brandSelect.appendChild(opt);});(lists.types||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;typeSelect.appendChild(opt);});(lists.categories||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;categorySelect.appendChild(opt);});(lists.countries||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;countrySelect.appendChild(opt);});}}catch(e){console.error('Load filters error:',e)}}
+  async loadFilters(){try{const r=await this.fetchAPI('/api/filters');const d=await r.json();if(d.success){const lists={brands:d.data.brands,types:d.data.types,categories:d.data.categories,countries:d.data.countries,issuers:d.data.issuers};['brands','types','categories','countries','issuers'].forEach(key=>{const datalist=document.getElementById(key+'-list');if(datalist)(lists[key]||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;datalist.appendChild(opt);});});const brandSelect=document.getElementById('cardBrandFilter');const typeSelect=document.getElementById('cardTypeFilter');const categorySelect=document.getElementById('cardCategoryFilter');const countrySelect=document.getElementById('cardCountryFilter');(lists.brands||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;brandSelect.appendChild(opt);});(lists.types||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;typeSelect.appendChild(opt);});(lists.categories||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;categorySelect.appendChild(opt);});(lists.countries||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;countrySelect.appendChild(opt);});}}catch(e){console.error('Load filters error:',e)}}
   getSearchParams(){
     const params={};
     const bin=document.getElementById('binInput').value.trim();
     if(bin){
       const parts=bin.split(/[\\n,]/).filter(b=>b.trim());
       params.bin=parts.join(',');
-      // If searching multiple bins, increase limit to max allowed to try and get all of them
       if(parts.length>1) params.limit=1000;
     }
     ['brand','type','category','country','issuer'].forEach(k=>{const v=document.getElementById(k+'Filter').value.trim();if(v)params[k]=v;});
@@ -90,12 +171,10 @@ class BINLookup{
     try{
       const params=this.getSearchParams();
       const qs=new URLSearchParams(params).toString();
-      const r=await fetch('/api/bin?'+qs);
+      const r=await this.fetchAPI('/api/bin?'+qs);
       const d=await r.json();
       if(d.success){
         this.currentResults=d.data;
-        
-        // Input Order Sorting Logic
         if(params.bin && params.bin.includes(',')){
           const inputOrder=params.bin.split(',').reduce((acc,b,i)=>{acc[b]=i;return acc;},{});
           this.currentResults.sort((a,b)=>{
@@ -104,7 +183,6 @@ class BINLookup{
              return ia-ib;
           });
         }
-        
         this.displayResults();
         this.updatePagination(d.pagination);
         setTimeout(()=>document.getElementById('resultsBody').scrollIntoView({behavior:'smooth',block:'nearest'}),100);
@@ -123,7 +201,30 @@ class BINLookup{
   updatePagination(p){const start=p.offset+1;const end=Math.min(p.offset+p.limit,p.total);document.getElementById('showingCount').textContent=start+'-'+end;document.getElementById('totalCount').textContent=p.total;const totalPages=Math.max(1,Math.ceil(p.total/p.limit));const currentPage=Math.floor(p.offset/p.limit)+1;const container=document.getElementById('pageNumbers');container.innerHTML='';const addBtn=i=>{const btn=document.createElement('button');btn.textContent=String(i);btn.className=(i===currentPage?'bg-[#4A8BFF] text-white shadow-lg':'glass text-gray-700')+' px-4 py-2 rounded-lg text-sm font-semibold hover-lift';btn.onclick=()=>{this.currentPage=i-1;this.search()};container.appendChild(btn);};const addEllipsis=()=>{const span=document.createElement('span');span.textContent='...';span.className='px-2 text-gray-600';container.appendChild(span);};const addRange=(s,e)=>{for(let i=s;i<=e;i++)addBtn(i)};if(totalPages<=10){addRange(1,totalPages);}else{addRange(1,Math.min(5,totalPages));if(currentPage>7)addEllipsis();const midStart=Math.max(currentPage-2,6);const midEnd=Math.min(currentPage+2,totalPages-5);if(midStart<=midEnd)addRange(midStart,midEnd);if(currentPage<totalPages-6)addEllipsis();addRange(Math.max(totalPages-4,6),totalPages);}const prevBtn=document.getElementById('prevBtn');const nextBtn=document.getElementById('nextBtn');prevBtn.disabled=currentPage===1;nextBtn.disabled=currentPage===totalPages;prevBtn.classList.toggle('opacity-50',prevBtn.disabled);prevBtn.classList.toggle('cursor-not-allowed',prevBtn.disabled);nextBtn.classList.toggle('opacity-50',nextBtn.disabled);nextBtn.classList.toggle('cursor-not-allowed',nextBtn.disabled);}
   previousPage(){if(this.currentPage>0){this.currentPage--;this.search()}}nextPage(){this.currentPage++;this.search()}jumpToPage(){const val=parseInt(document.getElementById('pageJumpInput').value);if(!isNaN(val)&&val>=1){this.currentPage=val-1;this.search();document.getElementById('pageJumpInput').value='';}}
   clearFilters(){document.getElementById('binInput').value='';document.getElementById('binCounter').textContent='374788';['brandFilter','typeFilter','categoryFilter','countryFilter','issuerFilter'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('limitInput').value='10';this.currentPage=0;this.search();}
-  async loadDashboard(force=false){const content=document.getElementById('dashContent');if(!force&&content.innerHTML.includes('grid'))return;content.innerHTML='<div class="text-center py-8"><div class="loading inline-block"></div></div>';try{const r=await fetch('/api/dashboard');const d=await r.json();if(d.success){const s=d.data;const topBrands=(s.brands||[]).slice(0,10);const topCountries=(s.countries||[]).slice(0,10);const topTypes=(s.types||[]).slice(0,10);const topCategories=(s.categories||[]).slice(0,10);const topBins=(s.topBins||[]).slice(0,10);content.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">'+
+  async updateData(){
+    const btn = document.getElementById('updateDataBtn');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<div class="loading inline-block mr-2"></div>Updating...';
+    try {
+      const r = await this.fetchAPI('/api/rebuild-stats', {
+        method: 'POST'
+      });
+      const d = await r.json();
+      if(d.success) {
+        this.showSuccess('Data updated successfully');
+        this.loadDashboard(true);
+      } else {
+        this.showError('Update failed: ' + (d.error || 'Unknown error'));
+      }
+    } catch(e) {
+      this.showError('Update error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
+  }
+  async loadDashboard(force=false){const content=document.getElementById('dashContent');if(!force&&content.innerHTML.includes('grid'))return;content.innerHTML='<div class="text-center py-8"><div class="loading inline-block"></div></div>';try{const r=await this.fetchAPI('/api/dashboard');const d=await r.json();if(d.success){const s=d.data;const topBrands=(s.brands||[]).slice(0,10);const topCountries=(s.countries||[]).slice(0,10);const topTypes=(s.types||[]).slice(0,10);const topCategories=(s.categories||[]).slice(0,10);const topBins=(s.topBins||[]).slice(0,10);content.innerHTML='<div class="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">'+
 '<div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-database text-3xl text-[#4A8BFF] mb-2"></i><div class="text-3xl font-bold text-gray-900">'+(s.totalRecords||0).toLocaleString()+'</div><div class="text-sm text-gray-600">Total BINs</div></div>'+
 '<div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-credit-card text-3xl text-blue-600 mb-2"></i><div class="text-3xl font-bold text-gray-900">'+(s.totalCards||0).toLocaleString()+'</div><div class="text-sm text-gray-600">Total Cards</div></div>'+
 '<div class="glass p-4 rounded-xl text-center hover-lift"><i class="fas fa-check-circle text-3xl text-[#4A8BFF] mb-2"></i><div class="text-3xl font-bold text-gray-900">'+(s.liveCards||0).toLocaleString()+'</div><div class="text-sm text-gray-600">Live Cards</div></div>'+
@@ -157,10 +258,9 @@ class BINLookup{
       const bins=rawBins?rawBins.split(',').flatMap(part=>part.split(NL)).map(b=>b.trim()).filter(b=>/^\\d{6}$/.test(b)):[];
       
       const params={brand:document.getElementById('cardBrandFilter').value||null,type:document.getElementById('cardTypeFilter').value||null,category:document.getElementById('cardCategoryFilter').value||null,country:document.getElementById('cardCountryFilter').value||null,issuer:document.getElementById('cardIssuerFilter').value.trim()||null,minCards:parseInt(document.getElementById('minCardsInput').value)||10,maxBins:parseInt(document.getElementById('maxBinsInput').value)||10000,status,bins};
-      const r=await fetch('/api/search-bins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
+      const r=await this.fetchAPI('/api/search-bins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
       const d=await r.json();
       if(d.success){
-        // Sort by input order if bins provided
         if(bins.length>0){
            const inputOrder=bins.reduce((acc,b,i)=>{acc[b]=i;return acc;},{});
            d.bins.sort((a,b)=>{
@@ -180,7 +280,6 @@ class BINLookup{
   
   displayBinResults(bins){const totalCards=bins.reduce((s,b)=>s+(b.cardCount||0),0);document.getElementById('foundBinsCount').textContent=String(bins.length);document.getElementById('totalCardsCount').textContent=totalCards.toLocaleString();const tbody=document.getElementById('cardResultsBody');tbody.innerHTML=bins.map((b,i)=>'<tr class="group hover:bg-gradient-to-r hover:from-indigo-100 hover:to-purple-100 border-b border-gray-300" style="animation:fadeIn .3s ease '+(i*.02)+'s both"><td class="px-6 py-4"><span class="font-mono text-[#4A8BFF] font-bold">'+b.bin+'</span></td><td class="px-6 py-4 text-gray-900">'+b.brand+'</td><td class="px-6 py-4"><span class="badge '+this.getTypeBadgeClass(b.type)+'">'+b.type+'</span></td><td class="px-6 py-4 text-gray-900">'+(b.category||'-')+'</td><td class="px-6 py-4"><span class="font-mono text-gray-900">'+b.country+'</span></td><td class="px-6 py-4"><span class="font-bold text-gray-900">'+(b.cardCount||0).toLocaleString()+'</span></td><td class="px-6 py-4"><div class="flex items-center gap-2"><div class="w-24 h-2 bg-gray-200 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-green-500 to-emerald-500" style="width:'+(b.liveRate*100).toFixed(0)+'%"></div></div><span class="text-sm font-semibold text-gray-900">'+(b.liveRate*100).toFixed(0)+'%</span></div></td></tr>').join('');}
   
-  // Sorting Feature
   sortResults(type, col){
     if(this.sortConfig.type!==type || this.sortConfig.col!==col){
       this.sortConfig={type,col,asc:true};
@@ -227,7 +326,7 @@ if(totalExpectedCards>=2000||isFullExport){
       document.getElementById('exportProgressText').textContent='Exporting BIN '+bin+' ('+(i+1)+'/'+this.cardExporter.bins.length+')...';
       for(let offset=0;offset<binTotalCards;offset+=BATCH_SIZE){
         if(this.cardExporter.cancelExport) break;
-        const r=await fetch('/api/export-cards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bins:[bin],limit:BATCH_SIZE,offset,status,format,sequential:true})});
+        const r=await this.fetchAPI('/api/export-cards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bins:[bin],limit:BATCH_SIZE,offset,status,format,sequential:true})});
         const d=await r.json();
         if(d.success&&d.cards.length>0){
           binExportedCards.push(...d.cards);
@@ -263,7 +362,7 @@ if(totalExpectedCards>=2000||isFullExport){
   const allCards=[];
   const BATCH_SIZE=10;
   try{for(let i=0;i<this.cardExporter.bins.length;i+=BATCH_SIZE){if(this.cardExporter.cancelExport){this.showError('Export cancelled');return;}const batch=this.cardExporter.bins.slice(i,Math.min(i+BATCH_SIZE,this.cardExporter.bins.length));const batchBins=batch.map(b=>b.bin);
-  const r=await fetch('/api/export-cards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bins:batchBins,cardsPerBin:cardsPerBinVal,status,format,sequential:false})});
+  const r=await this.fetchAPI('/api/export-cards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bins:batchBins,cardsPerBin:cardsPerBinVal,status,format,sequential:false})});
   const d=await r.json();if(d.success){
     allCards.push(...d.cards);
     const progress=((i+batch.length)/this.cardExporter.bins.length*100).toFixed(0);const elapsed=Math.floor((Date.now()-startTime)/1000);const totalCardsExported=allCards.length;const speed=elapsed>0?Math.floor(totalCardsExported/elapsed):0;document.getElementById('exportProgressFill').style.width=progress+'%';document.getElementById('exportProgressText').textContent='Processing '+(i+batch.length)+' / '+this.cardExporter.bins.length+' BINs...';document.getElementById('exportedCardsCount').textContent=totalCardsExported;document.getElementById('exportTime').textContent=elapsed;document.getElementById('exportSpeed').textContent=speed;}}
@@ -271,11 +370,11 @@ if(totalExpectedCards>=2000||isFullExport){
   cancelExport(){this.cardExporter.cancelExport=true;document.getElementById('exportProgressSection').classList.add('hidden');}
   downloadExport(){const content=document.getElementById('exportOutput').value;if(!content){this.showError('Nothing to download');return;}const blob=new Blob([content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='cards_export_'+Date.now()+'.txt';a.click();URL.revokeObjectURL(url);this.showSuccess('Download started');}
   clearCardFilters(){document.getElementById('cardBrandFilter').value='';document.getElementById('cardTypeFilter').value='';document.getElementById('cardCategoryFilter').value='';document.getElementById('cardCountryFilter').value='';document.getElementById('cardIssuerFilter').value='';document.getElementById('minCardsInput').value='10';document.getElementById('cardsPerBinInput').value='50';document.getElementById('maxBinsInput').value='10000';document.getElementById('statusUnknown').checked=true;document.getElementById('statusLive').checked=true;document.getElementById('statusCT').checked=true;document.getElementById('statusDie').checked=false;document.getElementById('cardResultsSection').classList.add('hidden');document.getElementById('exportOptionsSection').classList.add('hidden');document.getElementById('exportResultSection').classList.add('hidden');this.cardExporter.bins=[];}
-  async normalize(){const input=document.getElementById('normalizeInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');const btn=document.getElementById('normalizeBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Processing...';try{const filterExpired=document.getElementById('filterExpiredCheck').checked;const r=await fetch('/api/normalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:lines,filterExpired})});const d=await r.json();if(d.success){document.getElementById('normValid').textContent=d.data.validCount;document.getElementById('normError').textContent=d.data.errorCount;document.getElementById('normalizeOutput').value=d.data.valid.join(NL);document.getElementById('normalizeResult').classList.remove('hidden');if(d.data.errorCount>0){document.getElementById('normalizeErrors').value=d.data.errors.join(NL);document.getElementById('normErrorSection').classList.remove('hidden');}else{document.getElementById('normErrorSection').classList.add('hidden');}this.showSuccess('Normalized '+d.data.validCount+' cards');}}catch(e){this.showError('Normalize failed');}finally{btn.disabled=false;btn.innerHTML=html;}}
+  async normalize(){const input=document.getElementById('normalizeInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');const btn=document.getElementById('normalizeBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Processing...';try{const filterExpired=document.getElementById('filterExpiredCheck').checked;const r=await this.fetchAPI('/api/normalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:lines,filterExpired})});const d=await r.json();if(d.success){document.getElementById('normValid').textContent=d.data.validCount;document.getElementById('normError').textContent=d.data.errorCount;document.getElementById('normalizeOutput').value=d.data.valid.join(NL);document.getElementById('normalizeResult').classList.remove('hidden');if(d.data.errorCount>0){document.getElementById('normalizeErrors').value=d.data.errors.join(NL);document.getElementById('normErrorSection').classList.remove('hidden');}else{document.getElementById('normErrorSection').classList.add('hidden');}this.showSuccess('Normalized '+d.data.validCount+' cards');}}catch(e){this.showError('Normalize failed');}finally{btn.disabled=false;btn.innerHTML=html;}}
   handleDupFileUpload(e){const file=e.target.files[0];if(!file)return;if(!file.name.endsWith('.txt')){this.showError('Please select a .txt file');return;}const reader=new FileReader();reader.onload=(event)=>{const content=event.target.result;document.getElementById('dupInput').value=content;const lines=content.split(NL).filter(l=>l.trim());document.getElementById('dupCount').textContent=lines.length;this.showSuccess('Loaded '+lines.length+' cards from file');};reader.readAsText(file);e.target.value='';}
-  async checkDup(){const input=document.getElementById('dupInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());const btn=document.getElementById('dupBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Checking...';const BATCH_SIZE=1000;let allUnique=[];let allDuplicates=[];document.getElementById('dupProgress').classList.remove('hidden');try{for(let i=0;i<lines.length;i+=BATCH_SIZE){const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));const progress=Math.round(((i+batch.length)/lines.length)*100);document.getElementById('dupProgressFill').style.width=progress+'%';document.getElementById('dupProgressText').textContent='Processing '+(i+batch.length)+' / '+lines.length+'...';const r=await fetch('/api/check-duplicates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:batch})});if(!r.ok){const errorText=await r.text();console.error('API Error:',errorText);throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));}const d=await r.json();if(d.success){allUnique.push(...d.data.unique);allDuplicates.push(...d.data.duplicates);}else{throw new Error(d.error||'Unknown error');}if(i+BATCH_SIZE<lines.length){await new Promise(resolve=>setTimeout(resolve,100));}}document.getElementById('dupProgressFill').style.width='100%';document.getElementById('dupProgressText').textContent='Complete!';setTimeout(()=>{document.getElementById('dupProgress').classList.add('hidden');},1000);document.getElementById('dupTotal').textContent=lines.length;document.getElementById('dupUnique').textContent=allUnique.length;document.getElementById('dupDup').textContent=allDuplicates.length;document.getElementById('dupOutput').value=allUnique.join(NL);document.getElementById('dupResult').classList.remove('hidden');if(allDuplicates.length>0){document.getElementById('dupDupOutput').value=allDuplicates.join(NL);document.getElementById('dupDupSection').classList.remove('hidden');}else{document.getElementById('dupDupSection').classList.add('hidden');}this.showSuccess('Processed '+lines.length+' cards');}catch(e){this.showError('Check failed: '+e.message);}finally{btn.disabled=false;btn.innerHTML=html;}}
+  async checkDup(){const input=document.getElementById('dupInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());const btn=document.getElementById('dupBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Checking...';const BATCH_SIZE=1000;let allUnique=[];let allDuplicates=[];document.getElementById('dupProgress').classList.remove('hidden');try{for(let i=0;i<lines.length;i+=BATCH_SIZE){const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));const progress=Math.round(((i+batch.length)/lines.length)*100);document.getElementById('dupProgressFill').style.width=progress+'%';document.getElementById('dupProgressText').textContent='Processing '+(i+batch.length)+' / '+lines.length+'...';const r=await this.fetchAPI('/api/check-duplicates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:batch})});if(!r.ok){const errorText=await r.text();console.error('API Error:',errorText);throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));}const d=await r.json();if(d.success){allUnique.push(...d.data.unique);allDuplicates.push(...d.data.duplicates);}else{throw new Error(d.error||'Unknown error');}if(i+BATCH_SIZE<lines.length){await new Promise(resolve=>setTimeout(resolve,100));}}document.getElementById('dupProgressFill').style.width='100%';document.getElementById('dupProgressText').textContent='Complete!';setTimeout(()=>{document.getElementById('dupProgress').classList.add('hidden');},1000);document.getElementById('dupTotal').textContent=lines.length;document.getElementById('dupUnique').textContent=allUnique.length;document.getElementById('dupDup').textContent=allDuplicates.length;document.getElementById('dupOutput').value=allUnique.join(NL);document.getElementById('dupResult').classList.remove('hidden');if(allDuplicates.length>0){document.getElementById('dupDupOutput').value=allDuplicates.join(NL);document.getElementById('dupDupSection').classList.remove('hidden');}else{document.getElementById('dupDupSection').classList.add('hidden');}this.showSuccess('Processed '+lines.length+' cards');}catch(e){this.showError('Check failed: '+e.message);}finally{btn.disabled=false;btn.innerHTML=html;}}
   handleFileUpload(e){const file=e.target.files[0];if(!file)return;if(!file.name.endsWith('.txt')){this.showError('Please select a .txt file');return;}const reader=new FileReader();reader.onload=(event)=>{const content=event.target.result;document.getElementById('importInput').value=content;const lines=content.split(NL).filter(l=>l.trim());document.getElementById('importCount').textContent=lines.length;this.showSuccess('Loaded '+lines.length+' cards from file');};reader.readAsText(file);e.target.value='';}
-  async import(){const input=document.getElementById('importInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');if(!confirm('Import '+lines.length.toLocaleString()+' cards to database?'+NL+NL+'This action cannot be undone.'))return;const btn=document.getElementById('importBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Importing...';const BATCH_SIZE=1000;let totalImported=0;let totalErrors=0;const allErrors=[];document.getElementById('importProgress').classList.remove('hidden');try{for(let i=0;i<lines.length;i+=BATCH_SIZE){const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));const progress=Math.round(((i+batch.length)/lines.length)*100);document.getElementById('importProgressFill').style.width=progress+'%';document.getElementById('importProgressText').textContent='Importing '+(i+batch.length)+' / '+lines.length+' cards...';const r=await fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:batch})});if(!r.ok){const errorText=await r.text();console.error('API Error:',errorText);throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));}const d=await r.json();if(d.success){totalImported+=d.data.imported||0;totalErrors+=d.data.errorCount||0;if(d.data.errors&&d.data.errors.length>0){allErrors.push(...d.data.errors);}}else{throw new Error(d.error||'Unknown error');}if(i+BATCH_SIZE<lines.length){await new Promise(resolve=>setTimeout(resolve,50));}}document.getElementById('importProgressFill').style.width='100%';document.getElementById('importProgressText').textContent='Complete!';setTimeout(()=>{document.getElementById('importProgress').classList.add('hidden');},1000);document.getElementById('impSuccess').textContent=totalImported;document.getElementById('impError').textContent=totalErrors;document.getElementById('importErrors').value=allErrors.join(NL);if(allErrors.length>0)document.getElementById('impErrorSection').classList.remove('hidden');else document.getElementById('impErrorSection').classList.add('hidden');document.getElementById('importStats').classList.remove('hidden');this.showSuccess('Imported '+totalImported+' cards');}catch(e){this.showError('Import failed: '+e.message);}finally{btn.disabled=false;btn.innerHTML=html;}}
+  async import(){const input=document.getElementById('importInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');if(!confirm('Import '+lines.length.toLocaleString()+' cards to database?'+NL+NL+'This action cannot be undone.'))return;const btn=document.getElementById('importBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Importing...';const BATCH_SIZE=1000;let totalImported=0;let totalErrors=0;const allErrors=[];document.getElementById('importProgress').classList.remove('hidden');try{for(let i=0;i<lines.length;i+=BATCH_SIZE){const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));const progress=Math.round(((i+batch.length)/lines.length)*100);document.getElementById('importProgressFill').style.width=progress+'%';document.getElementById('importProgressText').textContent='Importing '+(i+batch.length)+' / '+lines.length+' cards...';const r=await this.fetchAPI('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:batch})});if(!r.ok){const errorText=await r.text();console.error('API Error:',errorText);throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));}const d=await r.json();if(d.success){totalImported+=d.data.imported||0;totalErrors+=d.data.errorCount||0;if(d.data.errors&&d.data.errors.length>0){allErrors.push(...d.data.errors);}}else{throw new Error(d.error||'Unknown error');}if(i+BATCH_SIZE<lines.length){await new Promise(resolve=>setTimeout(resolve,50));}}document.getElementById('importProgressFill').style.width='100%';document.getElementById('importProgressText').textContent='Complete!';setTimeout(()=>{document.getElementById('importProgress').classList.add('hidden');},1000);document.getElementById('impSuccess').textContent=totalImported;document.getElementById('impError').textContent=totalErrors;document.getElementById('importErrors').value=allErrors.join(NL);if(allErrors.length>0)document.getElementById('impErrorSection').classList.remove('hidden');else document.getElementById('impErrorSection').classList.add('hidden');document.getElementById('importStats').classList.remove('hidden');this.showSuccess('Imported '+totalImported+' cards');}catch(e){this.showError('Import failed: '+e.message);}finally{btn.disabled=false;btn.innerHTML=html;}}
   copy(id){const el=document.getElementById(id);if(!el.value)return this.showError('Nothing to copy');el.select();document.execCommand('copy');this.showSuccess('Copied to clipboard');}
   showError(msg){const t=document.createElement('div');t.className='fixed top-20 right-4 glass p-4 rounded-xl shadow-2xl z-50 fade-in';t.innerHTML='<div class="flex items-center gap-3"><i class="fas fa-exclamation-circle text-red-600 text-xl"></i><div><div class="font-semibold text-red-600">Error</div><div class="text-sm text-gray-700">'+msg+'</div></div></div>';document.body.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},4000);}
   showSuccess(msg){const t=document.createElement('div');t.className='fixed top-20 right-4 glass p-4 rounded-xl shadow-2xl z-50 fade-in';t.innerHTML='<div class="flex items-center gap-3"><i class="fas fa-check-circle text-green-600 text-xl"></i><div><div class="font-semibold text-green-600">Success</div><div class="text-sm text-gray-700">'+msg+'</div></div></div>';document.body.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3000);}

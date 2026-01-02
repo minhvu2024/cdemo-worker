@@ -18,10 +18,17 @@ export default {
         }
       });
     }
-    const router = new Router(env.DB, env.CACHE);
+    const router = new Router(env.DB, env.CACHE, env);
     ctx.waitUntil(router.db.ensureIndexes());
     try {
-      if (path === "/" || path === "/index.html") {
+      if (path === "/api/login" && request.method === "POST") return router.login(request);
+      if (path.startsWith("/api/")) {
+        // Protect all API routes except login (already handled)
+        if (path !== "/api/login") {
+          const authorized = await router.verifyAuth(request);
+          if (!authorized) return new Response(JSON.stringify({ success: false, error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+      }      if (path === "/" || path === "/index.html") {
         try {
           const db = new DatabaseService(env.DB);
           const s = await db.getDashboardStats();

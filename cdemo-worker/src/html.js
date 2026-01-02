@@ -72,7 +72,29 @@ body{padding-top:60px}
 </head>
 <body>
 
-<nav class="sticky-nav">
+<div id="loginSection" class="fixed inset-0 z-[2000] bg-[#F8F9FA] flex items-center justify-center fade-in">
+<div class="glass p-8 rounded-2xl w-full max-w-md shadow-2xl">
+<div class="text-center mb-6">
+<div class="w-16 h-16 bg-[#4A8BFF] rounded-full flex items-center justify-center mx-auto mb-4 text-white text-2xl font-bold"><i class="fas fa-shield-alt"></i></div>
+<h2 class="text-2xl font-bold text-gray-900">Admin Access</h2>
+<p class="text-sm text-gray-600">Please login to continue</p>
+</div>
+<form id="loginForm" class="space-y-4">
+<div>
+<label class="block text-sm font-semibold text-gray-700 mb-1">Username</label>
+<input type="text" id="username" class="w-full glass rounded-xl px-4 py-3 focus:ring-2 focus:ring-[#4A8BFF] input-glow" placeholder="Enter username">
+</div>
+<div>
+<label class="block text-sm font-semibold text-gray-700 mb-1">Password</label>
+<input type="password" id="password" class="w-full glass rounded-xl px-4 py-3 focus:ring-2 focus:ring-[#4A8BFF] input-glow" placeholder="Enter password">
+</div>
+<button type="submit" class="w-full btn-primary py-3 rounded-xl font-bold hover-lift">Login</button>
+<div id="loginError" class="text-red-500 text-sm text-center hidden"></div>
+</form>
+</div>
+</div>
+
+<nav class="sticky-nav hidden" id="mainNav">
 <div class="nav-tabs container mx-auto">
 <button class="tab-btn active" data-tab="dashboard">
 <span class="icon">📊</span><span class="text">Dashboard</span>
@@ -92,14 +114,14 @@ body{padding-top:60px}
 </div>
 </nav>
 
-<div class="container mx-auto px-4 py-3 fade-in">
+<div class="container mx-auto px-4 py-3 fade-in hidden" id="mainContent">
 
 <!-- Dashboard Tab -->
 <div id="dashboard" class="tab-content active">
 <div class="glass rounded-2xl p-4">
 <div class="flex justify-between items-center mb-4">
 <h2 class="text-2xl font-bold">Dashboard</h2>
-<button id="refreshDash" class="btn glass px-6 py-3 rounded-xl hover-lift"><i class="fas fa-sync mr-2"></i>Refresh</button>
+<button id="updateDataBtn" class="btn glass px-6 py-3 rounded-xl hover-lift text-[#4A8BFF] font-semibold"><i class="fas fa-database mr-2"></i>Update Data</button>
 </div>
 <div id="dashContent">
 <div class="text-center py-8"><div class="loading inline-block"></div></div>
