@@ -258,14 +258,14 @@ export class Router {
       const token = request.headers.get('X-Admin-Token') || '';
       if (!env || !env.ADMIN_TOKEN || token !== env.ADMIN_TOKEN) return this.json({ success: false, error: "Unauthorized" }, 401);
       const ok1 = await this.db.buildBinCardStats();
-      const ok2 = await this.db.buildCountryBinStats();
+      // country_stats table removed, no need to rebuild
       await Promise.all([
         this.cache.clear("dashboard"),
         this.cache.clear("stats"),
         this.cache.clear("card-stats"),
         this.cache.clear("search")
       ]);
-      return this.json({ success: !!(ok1 && ok2) });
+      return this.json({ success: !!ok1 });
     } catch (error) {
       return this.json({ success: false, error: error.message }, 500);
     }

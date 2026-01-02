@@ -21,8 +21,7 @@ export class DatabaseService {
         this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_country_brand ON bin_inventory(isoCode2, Brand)"),
         this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_brand_type ON bin_inventory(Brand, Type)"),
         this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_category ON bin_inventory(Category)"),
-        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_total ON bin_inventory(total_cards DESC)"),
-        this.db.prepare("CREATE TABLE IF NOT EXISTS country_stats (isoCode2 TEXT NOT NULL, Brand TEXT NOT NULL, Type TEXT NOT NULL, Category TEXT NOT NULL, Issuer TEXT NOT NULL, total_cards INTEGER NOT NULL DEFAULT 0, live_cards INTEGER NOT NULL DEFAULT 0, ct_cards INTEGER NOT NULL DEFAULT 0, die_cards INTEGER NOT NULL DEFAULT 0, unknown_cards INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')), PRIMARY KEY (isoCode2, Brand, Type, Category, Issuer))")
+        this.db.prepare("CREATE INDEX IF NOT EXISTS idx_bininv_total ON bin_inventory(total_cards DESC)")
       ]);
     } catch (e) {
       console.error("Index creation error:", e);
@@ -338,9 +337,10 @@ export class DatabaseService {
   }
 
   async importCards(cards) {
-    const CARDS_PER_INSERT = 12;
+    const CARDS_PER_INSERT = 12; // Keep low to respect D1 limits
     let success = 0, skipped = 0, errors = [];
-    const affectedBins = new Set();
+    
+    // 1. Chỉ thực hiện Insert vào cdata (Write tối thiểu)
     for (let i = 0; i < cards.length; i += CARDS_PER_INSERT) {
       const chunk = cards.slice(i, i + CARDS_PER_INSERT);
       try {
@@ -348,7 +348,6 @@ export class DatabaseService {
         const values = [];
         chunk.forEach(c => {
           values.push(c.pan, c.mm, c.yy, c.cvv, c.bin, c.last4, c.info || null);
-          affectedBins.add(c.bin);
         });
         await this.db.prepare(`INSERT OR IGNORE INTO cdata (pan, mm, yy, cvv, Bin, last4, info, status) VALUES ${placeholders}`).bind(...values).run();
         success += chunk.length;
@@ -357,107 +356,10 @@ export class DatabaseService {
         errors.push(`Chunk ${Math.floor(i / CARDS_PER_INSERT) + 1}: ${error.message}`);
       }
     }
-    const binsArray = Array.from(affectedBins);
-    if (binsArray.length > 0) {
-      const STATS_BATCH = 50;
-      for (let i = 0; i < binsArray.length; i += STATS_BATCH) {
-        const binBatch = binsArray.slice(i, i + STATS_BATCH);
-        try {
-          const binPlaceholders = binBatch.map(() => "?").join(",");
-          const binMetadataResult = await this.db.prepare(`
-            SELECT BIN, Brand, Type, Category, isoCode2, Issuer, CountryName 
-            FROM BIN_Data 
-            WHERE BIN IN (${binPlaceholders})
-          `).bind(...binBatch).all();
-          const binMetadataMap = new Map((binMetadataResult.results || []).map(b => [b.BIN, b]));
-          const statsResult = await this.db.prepare(`
-            SELECT 
-              c.Bin,
-              COUNT(*) as total_cards,
-              SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards,
-              SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards,
-              SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards,
-              SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards
-            FROM cdata c
-            WHERE c.Bin IN (${binPlaceholders})
-            GROUP BY c.Bin
-          `).bind(...binBatch).all();
-          const binInventoryStmts = [];
-          for (const stat of statsResult.results || []) {
-            const binMeta = binMetadataMap.get(stat.Bin) || {};
-            binInventoryStmts.push(this.db.prepare(`
-              INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              ON CONFLICT(Bin) DO UPDATE SET 
-                total_cards=excluded.total_cards,
-                live_cards=excluded.live_cards,
-                ct_cards=excluded.ct_cards,
-                die_cards=excluded.die_cards,
-                unknown_cards=excluded.unknown_cards,
-                updated_at=strftime('%s','now')
-            `).bind(
-              stat.Bin,
-              binMeta.Brand || 'UNKNOWN',
-              binMeta.Type || 'UNKNOWN',
-              binMeta.Category || 'UNKNOWN',
-              binMeta.isoCode2 || 'XX',
-              binMeta.Issuer || 'UNKNOWN',
-              binMeta.CountryName || null,
-              stat.total_cards,
-              stat.live_cards,
-              stat.ct_cards,
-              stat.die_cards,
-              stat.unknown_cards
-            ));
-          }
-          if (binInventoryStmts.length > 0) {
-            await this.db.batch(binInventoryStmts);
-          }
-          const countryStatsResult = await this.db.prepare(`
-            SELECT 
-              isoCode2, Brand, Type, Category, Issuer,
-              SUM(total_cards) as total_cards,
-              SUM(live_cards) as live_cards,
-              SUM(ct_cards) as ct_cards,
-              SUM(die_cards) as die_cards,
-              SUM(unknown_cards) as unknown_cards
-            FROM bin_inventory
-            WHERE Bin IN (${binPlaceholders})
-            GROUP BY isoCode2, Brand, Type, Category, Issuer
-          `).bind(...binBatch).all();
-          const countryStatsStmts = [];
-          for (const cs of countryStatsResult.results || []) {
-            countryStatsStmts.push(this.db.prepare(`
-              INSERT INTO country_stats (isoCode2, Brand, Type, Category, Issuer, total_cards, live_cards, ct_cards, die_cards, unknown_cards)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              ON CONFLICT(isoCode2, Brand, Type, Category, Issuer) DO UPDATE SET 
-                total_cards=excluded.total_cards,
-                live_cards=excluded.live_cards,
-                ct_cards=excluded.ct_cards,
-                die_cards=excluded.die_cards,
-                unknown_cards=excluded.unknown_cards,
-                updated_at=strftime('%s','now')
-            `).bind(
-              cs.isoCode2,
-              cs.Brand,
-              cs.Type,
-              cs.Category,
-              cs.Issuer,
-              cs.total_cards,
-              cs.live_cards,
-              cs.ct_cards,
-              cs.die_cards,
-              cs.unknown_cards
-            ));
-          }
-          if (countryStatsStmts.length > 0) {
-            await this.db.batch(countryStatsStmts);
-          }
-        } catch (error) {
-          console.error(`Stats update error for batch ${Math.floor(i / STATS_BATCH) + 1}:`, error.message);
-        }
-      }
-    }
+
+    // 2. KHÔNG update bin_inventory hay country_stats tại đây để tiết kiệm Write
+    // 3. KHÔNG clear cache để đảm bảo Dashboard vẫn load nhanh (dữ liệu cũ)
+    
     return { success, skipped, errors };
   }
 
@@ -466,16 +368,6 @@ export class DatabaseService {
       await this.db.batch([
         this.db.prepare(`DELETE FROM bin_inventory`),
         this.db.prepare(`INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards) SELECT c.Bin, COALESCE(b.Brand,'UNKNOWN'), COALESCE(b.Type,'UNKNOWN'), COALESCE(b.Category,'UNKNOWN'), COALESCE(b.isoCode2,'XX'), COALESCE(b.Issuer,'UNKNOWN'), b.CountryName, COUNT(*) as total_cards, SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards, SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards, SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards, SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards FROM cdata c LEFT JOIN BIN_Data b ON c.Bin = b.BIN GROUP BY c.Bin`)
-      ]);
-      return true;
-    } catch (e) { return false; }
-  }
-
-  async buildCountryBinStats() {
-    try {
-      await this.db.batch([
-        this.db.prepare(`DELETE FROM country_stats`),
-        this.db.prepare(`INSERT INTO country_stats (isoCode2, Brand, Type, Category, Issuer, total_cards, live_cards, ct_cards, die_cards, unknown_cards) SELECT isoCode2, Brand, Type, Category, Issuer, SUM(total_cards) as total_cards, SUM(live_cards) as live_cards, SUM(ct_cards) as ct_cards, SUM(die_cards) as die_cards, SUM(unknown_cards) as unknown_cards FROM bin_inventory GROUP BY isoCode2, Brand, Type, Category, Issuer`)
       ]);
       return true;
     } catch (e) { return false; }
