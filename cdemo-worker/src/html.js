@@ -89,7 +89,7 @@ body{padding-top:60px}
 <label class="block text-sm font-semibold text-gray-700 mb-1">Password</label>
 <input type="password" id="password" class="w-full glass rounded-xl px-4 py-3 focus:ring-2 focus:ring-[#4A8BFF] input-glow" placeholder="Enter password">
 </div>
-<button type="submit" class="w-full btn-primary py-3 rounded-xl font-bold hover-lift">Login</button>
+<button type="submit" class="w-full btn-primary py-2 rounded-lg font-bold hover-lift">Login</button>
 <div id="loginError" class="text-red-500 text-sm text-center hidden"></div>
 </form>
 </div>
@@ -125,7 +125,7 @@ body{padding-top:60px}
 <div class="glass rounded-2xl p-4">
 <div class="flex justify-between items-center mb-4">
 <h2 class="text-2xl font-bold">Dashboard</h2>
-<button id="updateDataBtn" class="btn glass px-6 py-2 rounded-xl hover-lift text-[#4A8BFF] font-bold"><i class="fas fa-database mr-2"></i>Update Data</button>
+<button id="updateDataBtn" class="btn glass px-3 py-2 rounded-lg hover-lift text-[#4A8BFF] font-bold"><i class="fas fa-database mr-2"></i>Update Data</button>
 </div>
 <div id="dashContent">
 <div class="text-center py-8"><div class="loading inline-block"></div></div>
@@ -193,10 +193,10 @@ body{padding-top:60px}
 </div>
 </div>
 <div class="flex flex-wrap gap-3">
-<button id="searchBtn" class="px-8 py-3 btn-primary rounded-xl font-semibold hover-lift">
+<button id="searchBtn" class="px-3 py-2 btn-primary rounded-lg font-semibold hover-lift">
 <i class="fas fa-search mr-2"></i>Bin Checker
 </button>
-<button id="clearBtn" class="px-8 py-3 glass rounded-xl font-semibold hover-lift">
+<button id="clearBtn" class="px-3 py-2 glass rounded-lg font-semibold hover-lift">
 <i class="fas fa-times mr-2"></i>Clear
 </button>
 </div>
@@ -220,15 +220,15 @@ body{padding-top:60px}
 <span id="totalCount" class="font-semibold text-[#4A8BFF]">0</span>
 </div>
 <div class="flex items-center gap-2">
-<button id="prevBtn" class="glass px-4 py-2 rounded-lg hover-lift" disabled>
+<button id="prevBtn" class="glass px-3 py-2 rounded-lg hover-lift" disabled>
 <i class="fas fa-chevron-left"></i>
 </button>
 <div id="pageNumbers" class="flex items-center gap-1"></div>
-<button id="nextBtn" class="glass px-4 py-2 rounded-lg hover-lift" disabled>
+<button id="nextBtn" class="glass px-3 py-2 rounded-lg hover-lift" disabled>
 <i class="fas fa-chevron-right"></i>
 </button>
 <input id="pageJumpInput" type="number" min="1" class="w-20 glass rounded-lg px-3 py-2 text-gray-900 text-sm input-glow" placeholder="Page"/>
-<button id="pageJumpBtn" class="glass px-4 py-2 rounded-lg hover-lift">Go</button>
+<button id="pageJumpBtn" class="glass px-3 py-2 rounded-lg hover-lift">Go</button>
 </div>
 </div>
 </div>
@@ -361,10 +361,10 @@ body{padding-top:60px}
 </div>
 
 <div class="flex flex-wrap gap-3">
-<button id="searchBinsBtn" class="px-6 py-2 btn-primary rounded-xl font-bold hover-lift">
+<button id="searchBinsBtn" class="px-3 py-2 btn-primary rounded-lg font-bold hover-lift">
 <i class="fas fa-search mr-2"></i>Search BINs
 </button>
-<button id="clearCardFiltersBtn" class="px-6 py-2 glass rounded-xl font-bold hover-lift">
+<button id="clearCardFiltersBtn" class="px-3 py-2 glass rounded-lg font-bold hover-lift">
 <i class="fas fa-times mr-2"></i>Clear
 </button>
 </div>
@@ -379,7 +379,7 @@ Found: <span id="foundBinsCount" class="text-[#4A8BFF] font-bold">0</span> BINs 
 Total Cards: <span id="totalCardsCount" class="text-[#4A8BFF] font-bold">0</span>
 </p>
 </div>
-<button id="exportAllBtn" class="px-6 py-2 btn-primary rounded-xl font-bold hover-lift">
+<button id="exportAllBtn" class="px-3 py-2 btn-primary rounded-lg font-bold hover-lift">
 <i class="fas fa-download mr-2"></i>Export All
 </button>
 </div>
@@ -447,10 +447,10 @@ Speed: <span id="exportSpeed" class="text-indigo-400 font-bold">0</span> cards/s
 <div class="flex items-center justify-between mb-4">
 <h3 class="text-xl font-bold">Export Result</h3>
 <div class="flex gap-2">
-<button id="copyExportBtn" class="px-6 py-2 glass rounded-xl font-semibold hover-lift">
+<button id="copyExportBtn" class="px-3 py-2 glass rounded-lg font-semibold hover-lift">
 <i class="fas fa-copy mr-2"></i>Copy All
 </button>
-<button id="downloadExportBtn" class="px-6 py-2 glass rounded-xl font-semibold hover-lift">
+<button id="downloadExportBtn" class="px-3 py-2 glass rounded-lg font-semibold hover-lift">
 <i class="fas fa-download mr-2"></i>Download
 </button>
 </div>
@@ -484,7 +484,7 @@ Normalize Cards
 <textarea id="normalizeInput" rows="6" class="w-full glass rounded-lg px-3 py-2 text-sm font-mono scrollbar resize-none mb-2 keep-scroll-start" placeholder="Paste cards here (any format)..."></textarea>
 <div class="flex items-center justify-between mb-2">
 <div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="normalizeCount">0</b></div>
-<button id="normalizeBtn" class="px-6 py-2 btn-primary rounded-xl font-bold hover-lift text-sm">
+<button id="normalizeBtn" class="px-3 py-2 btn-primary rounded-lg font-bold hover-lift text-sm">
 <i class="fas fa-magic mr-1"></i>Normalize
 </button>
 </div>
@@ -519,10 +519,10 @@ Check Duplicates
 <div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="dupCount">0</b></div>
 <div class="flex gap-2">
 <input type="file" id="dupFileInput" accept=".txt" class="hidden">
-<button id="dupFileBtn" class="px-6 py-2.5 glass rounded-xl font-bold hover-lift text-sm">
+<button id="dupFileBtn" class="px-3 py-2 glass rounded-lg font-bold hover-lift text-sm">
 <i class="fas fa-file-upload mr-1"></i>file.txt
 </button>
-<button id="dupBtn" class="px-6 py-2.5 btn-primary rounded-xl font-bold hover-lift text-sm">
+<button id="dupBtn" class="px-3 py-2 btn-primary rounded-lg font-bold hover-lift text-sm">
 <i class="fas fa-search mr-1"></i>Check
 </button>
 </div>
@@ -565,10 +565,10 @@ Import to Database
 <div class="text-xs text-gray-600">Cards: <b class="text-gray-900" id="importCount">0</b></div>
 <div class="flex gap-2">
 <input type="file" id="importFileInput" accept=".txt" class="hidden">
-<button id="importFileBtn" class="px-8 py-3 glass rounded-xl font-bold hover-lift text-sm">
+<button id="importFileBtn" class="px-3 py-2 glass rounded-lg font-bold hover-lift text-sm">
 <i class="fas fa-file-upload mr-1"></i>file.txt
 </button>
-<button id="importBtn" class="px-8 py-3 btn-primary rounded-xl font-bold hover-lift text-sm">
+<button id="importBtn" class="px-3 py-2 btn-primary rounded-lg font-bold hover-lift text-sm">
 <i class="fas fa-upload mr-1"></i>Import
 </button>
 </div>
