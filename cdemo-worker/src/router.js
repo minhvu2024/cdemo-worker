@@ -150,24 +150,29 @@ export class Router {
     try {
       const { cards } = await request.json();
       if (!cards || !Array.isArray(cards)) return this.json({ success: false, error: "Invalid input" }, 400);
+      
       const pans = [];
       const lineMap = new Map();
+      
       cards.forEach((line) => {
-        const normalized = line.trim().replace(/\s*\|\s*/g, '|');
-        const match = normalized.match(/^(\d{15,19})/);
-        if (match) {
-          const pan = match[1];
+        // Use CardUtils to extract PAN consistently
+        const normalized = CardUtils.normalize(line);
+        if (normalized && !normalized.error && normalized.pan) {
+          const pan = normalized.pan;
           pans.push(pan);
           if (!lineMap.has(pan)) lineMap.set(pan, []);
           lineMap.get(pan).push(line.trim());
         }
       });
+
       if (pans.length === 0) {
         return this.json({ success: true, data: { total: cards.length, unique: [], uniqueCount: 0, duplicates: [], duplicateCount: 0 } });
       }
+
       const duplicatePans = await this.db.checkDuplicates(pans);
       const unique = [];
       const duplicates = [];
+
       lineMap.forEach((items, pan) => {
         if (duplicatePans.has(pan)) {
           items.forEach(line => {
@@ -178,6 +183,7 @@ export class Router {
           items.forEach(line => unique.push(line));
         }
       });
+
       return this.json({ success: true, data: { total: cards.length, unique, uniqueCount: unique.length, duplicates, duplicateCount: duplicates.length } });
     } catch (error) {
       console.error("Check duplicates error:", error);

@@ -115,23 +115,29 @@ class BINLookup{
     safe('updateDataBtn','click',()=>this.updateData());
     safe('normalizeBtn','click',()=>this.normalize());
     safe('copyNorm','click',()=>this.copy('normalizeOutput'));
+    
+    // Unified Tool handlers
     safe('dupBtn','click',()=>this.checkDup());
     safe('dupFileBtn','click',()=>{const f=document.getElementById('dupFileInput');if(f)f.click()});
-    safe('dupFileInput','change',(e)=>this.handleDupFileUpload(e));
+    safe('dupFileInput','change',(e)=>this.handleFile(e, 'dupInput', 'dupCount'));
     safe('copyDup','click',()=>this.copy('dupOutput'));
+    
     safe('importBtn','click',()=>this.import());
     safe('importFileBtn','click',()=>{const f=document.getElementById('importFileInput');if(f)f.click()});
-    safe('importFileInput','change',(e)=>this.handleFileUpload(e));
+    safe('importFileInput','change',(e)=>this.handleFile(e, 'importInput', 'importCount'));
+    
     safe('searchBinsBtn','click',()=>this.searchBinsForExport());
     safe('clearCardFiltersBtn','click',()=>this.clearCardFilters());
     safe('exportAllBtn','click',()=>this.startExport());
     safe('cancelExportBtn','click',()=>this.cancelExport());
     safe('copyExportBtn','click',()=>this.copy('exportOutput'));
     safe('downloadExportBtn','click',()=>this.downloadExport());
+    
     ['Enter'].forEach(key=>{
       const b=document.getElementById('binInput');if(b)b.addEventListener('keypress',e=>{if(e.key===key)this.search()});
       const pj=document.getElementById('pageJumpInput');if(pj)pj.addEventListener('keypress',e=>{if(e.key===key)this.jumpToPage()});
     });
+    
     ['normalizeInput','dupInput','importInput'].forEach(id=>{
       const el=document.getElementById(id);
       if(el){
@@ -148,6 +154,82 @@ class BINLookup{
       }
     });
   }
+
+  // Generic File Handler
+  handleFile(e, inputId, countId){
+    const file=e.target.files[0];
+    if(!file)return;
+    if(!file.name.endsWith('.txt')){this.showError('Please select a .txt file');return;}
+    const reader=new FileReader();
+    reader.onload=(event)=>{
+      const content=event.target.result;
+      document.getElementById(inputId).value=content;
+      const lines=content.split(NL).filter(l=>l.trim());
+      document.getElementById(countId).textContent=lines.length.toLocaleString();
+      this.showSuccess('Loaded '+lines.length+' cards');
+    };
+    reader.readAsText(file);
+    e.target.value='';
+  }
+
+  // Generic Batch Processor
+  async processBatch(options){
+    const {lines, batchSize, apiUrl, method='POST', bodyFn, onBatchSuccess, onComplete, progressId, btnId} = options;
+    const btn = document.getElementById(btnId);
+    const originalText = btn.innerHTML;
+    btn.disabled=true;
+    btn.innerHTML='<div class="loading inline-block mr-2"></div>Processing...';
+    
+    if(progressId) document.getElementById(progressId).classList.remove('hidden');
+    
+    try {
+      for(let i=0; i<lines.length; i+=batchSize){
+        const batch = lines.slice(i, Math.min(i+batchSize, lines.length));
+        const progress = Math.round(((i+batch.length)/lines.length)*100);
+        
+        if(progressId){
+            document.getElementById(progressId+'Fill').style.width=progress+'%';
+            document.getElementById(progressId+'Text').textContent='Processing '+(i+batch.length)+' / '+lines.length+'...';
+        }
+
+        const r = await this.fetchAPI(apiUrl, {
+          method: method,
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(bodyFn(batch))
+        });
+        
+        if(!r.ok){
+             const err = await r.text();
+             throw new Error('HTTP '+r.status+': '+err.substring(0,100));
+        }
+        
+        const d = await r.json();
+        if(d.success){
+            if(onBatchSuccess) onBatchSuccess(d);
+        } else {
+            throw new Error(d.error || 'Unknown error');
+        }
+        
+        if(i+batchSize < lines.length) await new Promise(r=>setTimeout(r, 50));
+      }
+      
+      if(progressId){
+        document.getElementById(progressId+'Fill').style.width='100%';
+        document.getElementById(progressId+'Text').textContent='Complete!';
+        setTimeout(()=>{document.getElementById(progressId).classList.add('hidden');}, 1000);
+      }
+      
+      if(onComplete) onComplete();
+      
+    } catch(e) {
+      this.showError('Operation failed: '+e.message);
+      console.error(e);
+    } finally {
+      btn.disabled=false;
+      btn.innerHTML=originalText;
+    }
+  }
+
   async loadFilters(){try{const r=await this.fetchAPI('/api/filters');const d=await r.json();if(d.success){const lists={brands:d.data.brands,types:d.data.types,categories:d.data.categories,countries:d.data.countries,issuers:d.data.issuers};['brands','types','categories','countries','issuers'].forEach(key=>{const datalist=document.getElementById(key+'-list');if(datalist)(lists[key]||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;datalist.appendChild(opt);});});const brandSelect=document.getElementById('cardBrandFilter');const typeSelect=document.getElementById('cardTypeFilter');const categorySelect=document.getElementById('cardCategoryFilter');const countrySelect=document.getElementById('cardCountryFilter');(lists.brands||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;brandSelect.appendChild(opt);});(lists.types||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;typeSelect.appendChild(opt);});(lists.categories||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;categorySelect.appendChild(opt);});(lists.countries||[]).forEach(v=>{const opt=document.createElement('option');opt.value=v;opt.textContent=v;countrySelect.appendChild(opt);});}}catch(e){console.error('Load filters error:',e)}}
   getSearchParams(){
     const params={};
@@ -245,7 +327,7 @@ class BINLookup{
     const btn=document.getElementById('searchBinsBtn');
     const html=btn.innerHTML;
     btn.disabled=true;
-    btn.innerHTML='<div class=\"loading inline-block mr-2\"></div>Searching...';
+    btn.innerHTML='<div class="loading inline-block mr-2"></div>Searching...';
     try{
       const status=[];
       if(document.getElementById('statusUnknown').checked)status.push('unknown');
@@ -371,10 +453,80 @@ if(totalExpectedCards>=2000||isFullExport){
   downloadExport(){const content=document.getElementById('exportOutput').value;if(!content){this.showError('Nothing to download');return;}const blob=new Blob([content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='cards_export_'+Date.now()+'.txt';a.click();URL.revokeObjectURL(url);this.showSuccess('Download started');}
   clearCardFilters(){document.getElementById('cardBrandFilter').value='';document.getElementById('cardTypeFilter').value='';document.getElementById('cardCategoryFilter').value='';document.getElementById('cardCountryFilter').value='';document.getElementById('cardIssuerFilter').value='';document.getElementById('minCardsInput').value='10';document.getElementById('cardsPerBinInput').value='50';document.getElementById('maxBinsInput').value='10000';document.getElementById('statusUnknown').checked=true;document.getElementById('statusLive').checked=true;document.getElementById('statusCT').checked=true;document.getElementById('statusDie').checked=false;document.getElementById('cardResultsSection').classList.add('hidden');document.getElementById('exportOptionsSection').classList.add('hidden');document.getElementById('exportResultSection').classList.add('hidden');this.cardExporter.bins=[];}
   async normalize(){const input=document.getElementById('normalizeInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');const btn=document.getElementById('normalizeBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Processing...';try{const filterExpired=document.getElementById('filterExpiredCheck').checked;const r=await this.fetchAPI('/api/normalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:lines,filterExpired})});const d=await r.json();if(d.success){document.getElementById('normValid').textContent=d.data.validCount;document.getElementById('normError').textContent=d.data.errorCount;document.getElementById('normalizeOutput').value=d.data.valid.join(NL);document.getElementById('normalizeResult').classList.remove('hidden');if(d.data.errorCount>0){document.getElementById('normalizeErrors').value=d.data.errors.join(NL);document.getElementById('normErrorSection').classList.remove('hidden');}else{document.getElementById('normErrorSection').classList.add('hidden');}this.showSuccess('Normalized '+d.data.validCount+' cards');}}catch(e){this.showError('Normalize failed');}finally{btn.disabled=false;btn.innerHTML=html;}}
-  handleDupFileUpload(e){const file=e.target.files[0];if(!file)return;if(!file.name.endsWith('.txt')){this.showError('Please select a .txt file');return;}const reader=new FileReader();reader.onload=(event)=>{const content=event.target.result;document.getElementById('dupInput').value=content;const lines=content.split(NL).filter(l=>l.trim());document.getElementById('dupCount').textContent=lines.length;this.showSuccess('Loaded '+lines.length+' cards from file');};reader.readAsText(file);e.target.value='';}
-  async checkDup(){const input=document.getElementById('dupInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());const btn=document.getElementById('dupBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Checking...';const BATCH_SIZE=1000;let allUnique=[];let allDuplicates=[];document.getElementById('dupProgress').classList.remove('hidden');try{for(let i=0;i<lines.length;i+=BATCH_SIZE){const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));const progress=Math.round(((i+batch.length)/lines.length)*100);document.getElementById('dupProgressFill').style.width=progress+'%';document.getElementById('dupProgressText').textContent='Processing '+(i+batch.length)+' / '+lines.length+'...';const r=await this.fetchAPI('/api/check-duplicates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:batch})});if(!r.ok){const errorText=await r.text();console.error('API Error:',errorText);throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));}const d=await r.json();if(d.success){allUnique.push(...d.data.unique);allDuplicates.push(...d.data.duplicates);}else{throw new Error(d.error||'Unknown error');}if(i+BATCH_SIZE<lines.length){await new Promise(resolve=>setTimeout(resolve,100));}}document.getElementById('dupProgressFill').style.width='100%';document.getElementById('dupProgressText').textContent='Complete!';setTimeout(()=>{document.getElementById('dupProgress').classList.add('hidden');},1000);document.getElementById('dupTotal').textContent=lines.length;document.getElementById('dupUnique').textContent=allUnique.length;document.getElementById('dupDup').textContent=allDuplicates.length;document.getElementById('dupOutput').value=allUnique.join(NL);document.getElementById('dupResult').classList.remove('hidden');if(allDuplicates.length>0){document.getElementById('dupDupOutput').value=allDuplicates.join(NL);document.getElementById('dupDupSection').classList.remove('hidden');}else{document.getElementById('dupDupSection').classList.add('hidden');}this.showSuccess('Processed '+lines.length+' cards');}catch(e){this.showError('Check failed: '+e.message);}finally{btn.disabled=false;btn.innerHTML=html;}}
-  handleFileUpload(e){const file=e.target.files[0];if(!file)return;if(!file.name.endsWith('.txt')){this.showError('Please select a .txt file');return;}const reader=new FileReader();reader.onload=(event)=>{const content=event.target.result;document.getElementById('importInput').value=content;const lines=content.split(NL).filter(l=>l.trim());document.getElementById('importCount').textContent=lines.length;this.showSuccess('Loaded '+lines.length+' cards from file');};reader.readAsText(file);e.target.value='';}
-  async import(){const input=document.getElementById('importInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');if(!confirm('Import '+lines.length.toLocaleString()+' cards to database?'+NL+NL+'This action cannot be undone.'))return;const btn=document.getElementById('importBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Importing...';const BATCH_SIZE=1000;let totalImported=0;let totalErrors=0;const allErrors=[];document.getElementById('importProgress').classList.remove('hidden');try{for(let i=0;i<lines.length;i+=BATCH_SIZE){const batch=lines.slice(i,Math.min(i+BATCH_SIZE,lines.length));const progress=Math.round(((i+batch.length)/lines.length)*100);document.getElementById('importProgressFill').style.width=progress+'%';document.getElementById('importProgressText').textContent='Importing '+(i+batch.length)+' / '+lines.length+' cards...';const r=await this.fetchAPI('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:batch})});if(!r.ok){const errorText=await r.text();console.error('API Error:',errorText);throw new Error('HTTP '+r.status+': '+errorText.substring(0,100));}const d=await r.json();if(d.success){totalImported+=d.data.imported||0;totalErrors+=d.data.errorCount||0;if(d.data.errors&&d.data.errors.length>0){allErrors.push(...d.data.errors);}}else{throw new Error(d.error||'Unknown error');}if(i+BATCH_SIZE<lines.length){await new Promise(resolve=>setTimeout(resolve,50));}}document.getElementById('importProgressFill').style.width='100%';document.getElementById('importProgressText').textContent='Complete!';setTimeout(()=>{document.getElementById('importProgress').classList.add('hidden');},1000);document.getElementById('impSuccess').textContent=totalImported;document.getElementById('impError').textContent=totalErrors;document.getElementById('importErrors').value=allErrors.join(NL);if(allErrors.length>0)document.getElementById('impErrorSection').classList.remove('hidden');else document.getElementById('impErrorSection').classList.add('hidden');document.getElementById('importStats').classList.remove('hidden');this.showSuccess('Imported '+totalImported+' cards');}catch(e){this.showError('Import failed: '+e.message);}finally{btn.disabled=false;btn.innerHTML=html;}}
+  
+  async checkDup(){
+    const input=document.getElementById('dupInput').value.trim();
+    if(!input)return this.showError('Please enter cards');
+    const lines=input.split(NL).filter(l=>l.trim());
+    
+    let allUnique=[], allDuplicates=[];
+    
+    await this.processBatch({
+        lines,
+        batchSize: 1000,
+        apiUrl: '/api/check-duplicates',
+        btnId: 'dupBtn',
+        progressId: 'dupProgress',
+        bodyFn: (batch) => ({cards: batch}),
+        onBatchSuccess: (d) => {
+            allUnique.push(...d.data.unique);
+            allDuplicates.push(...d.data.duplicates);
+        },
+        onComplete: () => {
+             document.getElementById('dupTotal').textContent=lines.length;
+             document.getElementById('dupUnique').textContent=allUnique.length;
+             document.getElementById('dupDup').textContent=allDuplicates.length;
+             document.getElementById('dupOutput').value=allUnique.join(NL);
+             document.getElementById('dupResult').classList.remove('hidden');
+             if(allDuplicates.length>0){
+                document.getElementById('dupDupOutput').value=allDuplicates.join(NL);
+                document.getElementById('dupDupSection').classList.remove('hidden');
+             } else {
+                document.getElementById('dupDupSection').classList.add('hidden');
+             }
+             this.showSuccess('Check completed');
+        }
+    });
+  }
+
+  async import(){
+    const input=document.getElementById('importInput').value.trim();
+    if(!input)return this.showError('Please enter cards');
+    const lines=input.split(NL).filter(l=>l.trim());
+    if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');
+    if(!confirm('Import '+lines.length.toLocaleString()+' cards to database?'+NL+NL+'This action cannot be undone.'))return;
+
+    let totalImported=0, totalErrors=0, allErrors=[];
+
+    await this.processBatch({
+        lines,
+        batchSize: 1000,
+        apiUrl: '/api/import',
+        btnId: 'importBtn',
+        progressId: 'importProgress',
+        bodyFn: (batch) => ({cards: batch}),
+        onBatchSuccess: (d) => {
+            totalImported += d.data.imported||0;
+            totalErrors += d.data.errorCount||0;
+            if(d.data.errors) allErrors.push(...d.data.errors);
+        },
+        onComplete: () => {
+            document.getElementById('impSuccess').textContent=totalImported;
+            document.getElementById('impError').textContent=totalErrors;
+            document.getElementById('importStats').classList.remove('hidden');
+            
+            if(allErrors.length>0){
+                document.getElementById('importErrors').value=allErrors.join(NL);
+                document.getElementById('impErrorSection').classList.remove('hidden');
+            } else {
+                document.getElementById('impErrorSection').classList.add('hidden');
+            }
+            this.showSuccess('Import completed');
+            this.updateData(); 
+        }
+    });
+  }
+
   copy(id){const el=document.getElementById(id);if(!el.value)return this.showError('Nothing to copy');el.select();document.execCommand('copy');this.showSuccess('Copied to clipboard');}
   showError(msg){const t=document.createElement('div');t.className='fixed top-20 right-4 glass p-4 rounded-xl shadow-2xl z-50 fade-in';t.innerHTML='<div class="flex items-center gap-3"><i class="fas fa-exclamation-circle text-red-600 text-xl"></i><div><div class="font-semibold text-red-600">Error</div><div class="text-sm text-gray-700">'+msg+'</div></div></div>';document.body.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},4000);}
   showSuccess(msg){const t=document.createElement('div');t.className='fixed top-20 right-4 glass p-4 rounded-xl shadow-2xl z-50 fade-in';t.innerHTML='<div class="flex items-center gap-3"><i class="fas fa-check-circle text-green-600 text-xl"></i><div><div class="font-semibold text-green-600">Success</div><div class="text-sm text-gray-700">'+msg+'</div></div></div>';document.body.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3000);}
