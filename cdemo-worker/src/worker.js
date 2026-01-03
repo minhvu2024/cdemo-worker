@@ -19,9 +19,10 @@ export default {
       });
     }
     const router = new Router(env.DB, env.CACHE, env);
-    ctx.waitUntil(router.db.ensureIndexes());
+    // REMOVED: ctx.waitUntil(router.db.ensureIndexes()); -> Causes massive DB load on every request
     try {
       if (path === "/api/login" && request.method === "POST") return router.login(request);
+      if (path === "/api/admin/setup-db" && request.method === "POST") return router.setupDB(request); // New manual setup route
       if (path.startsWith("/api/")) {
         // Protect all API routes except login (already handled)
         if (path !== "/api/login") {

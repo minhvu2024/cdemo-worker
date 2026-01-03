@@ -32,6 +32,19 @@ export class Router {
     }
   }
 
+  async setupDB(request) {
+    // Admin only
+    const authorized = await this.verifyAuth(request);
+    if (!authorized) return this.json({ success: false, error: "Unauthorized" }, 401);
+    
+    try {
+      await this.db.ensureIndexes();
+      return this.json({ success: true, message: "Database schema and indexes updated" });
+    } catch (e) {
+      return this.json({ success: false, error: e.message }, 500);
+    }
+  }
+
   async verifyAuth(request) {
     const auth = request.headers.get("Authorization");
     if (!auth || !auth.startsWith("Bearer ")) return false;
