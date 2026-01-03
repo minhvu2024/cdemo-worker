@@ -360,23 +360,13 @@ export class DatabaseService {
     for (let i = 0; i < cards.length; i += CARDS_PER_INSERT) {
       const chunk = cards.slice(i, i + CARDS_PER_INSERT);
       try {
-        const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, 'unknown', ?)").join(",");
+        const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, 'unknown')").join(",");
         const values = [];
         chunk.forEach(c => {
-          // Calculate exp_date (YYYYMM)
-          let expDate = null;
-          try {
-            const yy = parseInt(c.yy);
-            const mm = parseInt(c.mm);
-            if (!isNaN(yy) && !isNaN(mm)) {
-              expDate = (2000 + yy) * 100 + mm;
-            }
-          } catch (e) {}
-          
-          values.push(c.pan, c.mm, c.yy, c.cvv, c.bin, c.last4, c.info || null, expDate);
+          values.push(c.pan, c.mm, c.yy, c.cvv, c.bin, c.last4, c.info || null);
           if (c.bin) affectedBins.add(c.bin);
         });
-        await this.db.prepare(`INSERT OR IGNORE INTO cdata (pan, mm, yy, cvv, Bin, last4, info, status, exp_date) VALUES ${placeholders}`).bind(...values).run();
+        await this.db.prepare(`INSERT OR IGNORE INTO cdata (pan, mm, yy, cvv, Bin, last4, info, status) VALUES ${placeholders}`).bind(...values).run();
         success += chunk.length;
       } catch (error) {
         skipped += chunk.length;
