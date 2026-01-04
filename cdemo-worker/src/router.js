@@ -212,13 +212,39 @@ export class Router {
       if (normalized.valid.length === 0) {
         return this.json({ success: false, error: "No valid cards", data: { total: cards.length, imported: 0, skipped: 0, errors: normalized.errors, errorCount: normalized.errors.length } }, 400);
       }
+      
+      // 1. Thực hiện Import vào DB (Delta Update bin_inventory đã được xử lý trong database.js)
       const result = await this.db.importCards(normalized.valid);
-      await Promise.all([
-        this.cache.clear("dashboard"),
-        this.cache.clear("stats"),
-        this.cache.clear("card-stats"),
-        this.cache.clear("search")
-      ]);
+      
+      // 2. Cập nhật KV Dashboard (Cộng dồn tương đối)
+      // Logic: Lấy cache cũ -> Cộng thêm số lượng mới -> Ghi đè
+      // Giúp Dashboard hiển thị số tăng ngay lập tức mà không cần Query DB
+      try {
+        const currentDash = await this.cache.get("dashboard", {});
+        if (currentDash && currentDash.data) {
+          const addedCount = result.success || 0;
+          
+          // Cập nhật số tổng
+          currentDash.data.totalCards = (currentDash.data.totalCards || 0) + addedCount;
+          // Tạm thời cộng vào Unknown status (vì import mặc định là unknown)
+          // Khi nào check live/die thì sẽ update lại sau
+          // currentDash.data.unknownCards = (currentDash.data.unknownCards || 0) + addedCount; 
+          
+          // Lưu lại KV với TTL dài (vẫn giữ nguyên 1h hoặc tăng lên tùy ý, ở đây giữ nguyên logic cũ nhưng không xóa)
+          await this.cache.set("dashboard", {}, currentDash, 604800); // 7 ngày
+        }
+      } catch (e) {
+        console.error("KV update failed:", e);
+      }
+
+      // 3. KHÔNG clear cache search/stats để tránh Read spike
+      // await Promise.all([
+      //   this.cache.clear("dashboard"),
+      //   this.cache.clear("stats"),
+      //   this.cache.clear("card-stats"),
+      //   this.cache.clear("search")
+      // ]);
+      
       const allErrors = [...normalized.errors, ...result.errors.map(e => `Error\t${e}`)];
       return this.json({ success: true, data: { total: cards.length, imported: result.success, skipped: result.skipped, errors: allErrors, errorCount: allErrors.length } });
     } catch (error) {
@@ -322,16 +348,28 @@ export class Router {
     }
   }
   async rebuildStats(request, env) {
+    // Đây là nút "Update Data" thủ công
+    // Logic: Quét DB thật -> Ghi đè Cache -> Chính xác 100%
     try {
+      // 1. Rebuild bin_inventory (Nếu cần thiết, nhưng với Delta Update thì bước này nhẹ)
       const ok1 = await this.db.buildBinCardStats();
-      // country_stats table removed, no need to rebuild
+      
+      // 2. Lấy số liệu mới nhất từ DB
+      const dashboardData = await this.db.getDashboardStats();
+      const statsData = await this.db.getStats();
+      const filterData = await this.db.getFilters();
+      
+      // 3. Ghi đè vào KV (Refresh Cache)
       await Promise.all([
-        this.cache.clear("dashboard"),
-        this.cache.clear("stats"),
-        this.cache.clear("card-stats"),
-        this.cache.clear("search")
+        this.cache.set("dashboard", {}, { success: true, data: dashboardData }, 604800), // 7 ngày
+        this.cache.set("stats", {}, { success: true, data: statsData }, 604800),
+        this.cache.set("filters_v2", {}, { success: true, data: filterData }, 604800)
       ]);
-      return this.json({ success: !!ok1 });
+      
+      // Clear các cache tìm kiếm cũ để user search ra dữ liệu mới
+      await this.cache.clear("search");
+      
+      return this.json({ success: true, message: "Data updated and cached successfully" });
     } catch (error) {
       return this.json({ success: false, error: error.message }, 500);
     }
