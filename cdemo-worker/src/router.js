@@ -286,34 +286,18 @@ export class Router {
     try {
       const params = this.parseParams(new URL(request.url));
       
-      // KV-First Strategy for Bin Checker (List/Filter)
-      try {
-        const cache = await this.cache.get("bin_cache_v2");
-        if (cache) {
-          const result = BinCache.search(cache, params);
-          return this.json({
-            success: true,
-            data: result.bins,
-            pagination: { 
-              total: result.total, 
-              limit: params.limit, 
-              offset: params.offset, 
-              hasMore: params.offset + params.limit < result.total 
-            }
-          });
-        }
-      } catch (e) {
-        console.error("BinCache search error:", e);
-      }
-
-      // Fallback to D1
+      // Bin Checker (Global 400k BINs) -> MUST use D1
+      // Reverted KV logic here as KV only contains inventory data (21k BINs)
+      
       const cached = await this.cache.get("search", params);
       if (cached) return this.json(cached);
+      
       const { data, total } = await this.db.searchBIN(params);
       const response = {
         success: true, data,
         pagination: { total, limit: params.limit, offset: params.offset, hasMore: params.offset + params.limit < total }
       };
+      
       await this.cache.set("search", params, response, CACHE_TTL.SEARCH);
       return this.json(response);
     } catch (error) {
