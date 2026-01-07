@@ -1,6 +1,7 @@
 export class CacheService {
   constructor(kv) { this.kv = kv; this.ttl = 3600; }
   key(prefix, params) {
+    if (!params || Object.keys(params).length === 0) return prefix;
     return `${prefix}:${Object.keys(params).sort().map(k => `${k}:${params[k]}`).join("|")}`;
   }
   async get(prefix, params) {
