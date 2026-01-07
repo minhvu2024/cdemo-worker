@@ -115,26 +115,77 @@ export class Router {
   async searchBins(request) {
     try {
       const body = await request.json();
+      const minCards = body.minCards !== undefined ? body.minCards : 10; // Default 10
       
-      // KV-First Strategy for Card Checker
+      // KV-First Strategy
+      let kvResults = [];
+      let missingBins = [];
+      
       try {
         const cache = await this.cache.get("bin_cache_v2");
         if (cache) {
           const bins = body.bins || [];
-          const results = BinCache.lookup(cache, bins);
-          return this.json({ success: true, bins: results, total: results.length });
+          kvResults = BinCache.lookup(cache, bins);
+          
+          // Phân loại: BIN nào đã có trong KV, BIN nào chưa (source='unknown')
+          missingBins = kvResults.filter(r => r.source === 'unknown').map(r => r.bin);
+          
+          // OPTIMIZATION: Nếu minCards >= 10, ta KHÔNG CẦN query D1 nữa.
+          // Lý do: KV đã chứa toàn bộ BIN có >= 10 cards.
+          // Nếu không thấy trong KV nghĩa là BIN đó < 10 cards -> Không thỏa mãn điều kiện lọc.
+          if (minCards >= 10) {
+             return this.json({ success: true, bins: kvResults, total: kvResults.length });
+          }
         }
       } catch (e) {
         console.error("BinCache lookup error:", e);
       }
 
-      // Fallback to D1 (Old logic)
-      const cached = await this.cache.get("search-bins", body);
-      if (cached) return this.json(cached);
-      const result = await this.db.searchBins(body);
-      const response = { success: true, ...result };
-      await this.cache.set("search-bins", body, response, CACHE_TTL.SEARCH);
-      return this.json(response);
+      // Fallback D1: Chỉ chạy khi (KV Miss/Lỗi) HOẶC (minCards < 10 và có missing bins)
+      
+      // Nếu KV hoạt động tốt và minCards < 10, ta chỉ query D1 cho các missingBins
+      let binsToQuery = (missingBins.length > 0) ? missingBins : (body.bins || []);
+      
+      // Nếu binsToQuery rỗng (tức là tìm thấy hết trong KV rồi), trả về luôn
+      if (binsToQuery.length === 0) {
+         return this.json({ success: true, bins: kvResults, total: kvResults.length });
+      }
+
+      // Query D1 cho phần còn thiếu
+      // Lưu ý: params truyền vào searchBins của DB cần đúng format
+      const dbParams = { ...body, bins: binsToQuery }; 
+      
+      // Check cache D1 cũ (nếu có) cho nhóm này
+      const cachedD1 = await this.cache.get("search-bins", dbParams);
+      let dbResults = [];
+      
+      if (cachedD1 && cachedD1.data) {
+        dbResults = cachedD1.data;
+      } else {
+        const result = await this.db.searchBins(dbParams);
+        dbResults = result.data || [];
+        // Cache lại kết quả D1 này (ngắn hạn)
+        await this.cache.set("search-bins", dbParams, { success: true, data: dbResults }, CACHE_TTL.SEARCH);
+      }
+      
+      // Merge kết quả: KV Results (đã có) + DB Results (vừa tìm được)
+      // Cần update lại thông tin cho các missingBins trong kvResults bằng dữ liệu từ dbResults
+      const finalResults = kvResults.map(item => {
+        if (item.source !== 'unknown') return item; // Giữ nguyên item lấy từ KV
+        
+        // Tìm trong kết quả DB
+        const foundInDb = dbResults.find(d => d.bin === item.bin);
+        if (foundInDb) {
+          return { ...item, ...foundInDb, source: 'database' };
+        }
+        return item; // Vẫn là unknown (không có trong cả DB)
+      });
+      
+      // Nếu kvResults rỗng (do KV lỗi/miss hoàn toàn), dùng dbResults
+      if (kvResults.length === 0) return this.json({ success: true, bins: dbResults, total: dbResults.length });
+
+      return this.json({ success: true, bins: finalResults, total: finalResults.length });
+
     } catch (error) {
       console.error("Search bins error:", error);
       return this.json({ success: false, error: error.message }, 500);
