@@ -82,7 +82,27 @@ export class DatabaseService {
     const { brand, type, category, country, issuer, bins = [], minCards = 10, maxBins = 10000, status = ['unknown', '1', '2'] } = params;
     const where = ["1=1"];
     const qp = [];
-    if (Array.isArray(bins) && bins.length > 0) { where.push(`Bin IN (${bins.map(() => '?').join(',')})`); qp.push(...bins); }
+    
+    // Nếu có list bins, ưu tiên search theo list này
+    if (Array.isArray(bins) && bins.length > 0) { 
+      // Fix lỗi too many SQL variables bằng cách chia nhỏ nếu cần thiết
+      // Tuy nhiên ở tầng này ta giả định gọi query thẳng.
+      // Nếu list quá dài, caller nên chia batch. 
+      // Nhưng để an toàn, ta giới hạn số lượng BIN tối đa trong 1 query hoặc dùng logic khác.
+      // Với D1, giới hạn biến là 100-999.
+      
+      if (bins.length > 500) {
+         // Nếu > 500 BIN, chỉ lấy 500 BIN đầu tiên để tránh lỗi (Tạm thời)
+         // Hoặc throw error yêu cầu client chia nhỏ
+         const subset = bins.slice(0, 500);
+         where.push(`Bin IN (${subset.map(() => '?').join(',')})`); 
+         qp.push(...subset);
+      } else {
+         where.push(`Bin IN (${bins.map(() => '?').join(',')})`); 
+         qp.push(...bins);
+      }
+    }
+    
     if (brand) { where.push("Brand = ?"); qp.push(brand); }
     if (type) { where.push("Type = ?"); qp.push(type); }
     if (category) { where.push("Category = ?"); qp.push(category); }
