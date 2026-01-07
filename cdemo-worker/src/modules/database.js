@@ -351,6 +351,23 @@ export class DatabaseService {
     return duplicates;
   }
 
+  async getBinInventoryForCache() {
+    try {
+      // Select bins with >= 10 cards for caching
+      // Also fetching all columns needed for compression
+      const sql = `
+        SELECT Bin, Brand, Type, Category, isoCode2, Issuer, total_cards, live_cards, die_cards 
+        FROM bin_inventory 
+        WHERE total_cards >= 10
+      `;
+      const result = await this.db.prepare(sql).all();
+      return result.results || [];
+    } catch (e) {
+      console.error("Get bin inventory for cache error:", e);
+      return [];
+    }
+  }
+
   async importCards(cards) {
     const CARDS_PER_INSERT = 12; // Keep low to respect D1 limits
     let success = 0, skipped = 0, errors = [];

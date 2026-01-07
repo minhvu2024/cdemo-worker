@@ -1,6 +1,7 @@
 import { DatabaseService } from "./modules/database.js";
 import { CacheService } from "./modules/cache.js";
 import { CardUtils } from "./modules/card-utils.js";
+import { BinCache } from "./modules/bin-cache.js";
 
 const CACHE_TTL = {
   STATS: 21600,
@@ -114,6 +115,20 @@ export class Router {
   async searchBins(request) {
     try {
       const body = await request.json();
+      
+      // KV-First Strategy for Card Checker
+      try {
+        const cache = await this.cache.get("bin_cache_v2");
+        if (cache) {
+          const bins = body.bins || [];
+          const results = BinCache.lookup(cache, bins);
+          return this.json({ success: true, bins: results, total: results.length });
+        }
+      } catch (e) {
+        console.error("BinCache lookup error:", e);
+      }
+
+      // Fallback to D1 (Old logic)
       const cached = await this.cache.get("search-bins", body);
       if (cached) return this.json(cached);
       const result = await this.db.searchBins(body);
@@ -270,6 +285,28 @@ export class Router {
   async search(request) {
     try {
       const params = this.parseParams(new URL(request.url));
+      
+      // KV-First Strategy for Bin Checker (List/Filter)
+      try {
+        const cache = await this.cache.get("bin_cache_v2");
+        if (cache) {
+          const result = BinCache.search(cache, params);
+          return this.json({
+            success: true,
+            data: result.bins,
+            pagination: { 
+              total: result.total, 
+              limit: params.limit, 
+              offset: params.offset, 
+              hasMore: params.offset + params.limit < result.total 
+            }
+          });
+        }
+      } catch (e) {
+        console.error("BinCache search error:", e);
+      }
+
+      // Fallback to D1
       const cached = await this.cache.get("search", params);
       if (cached) return this.json(cached);
       const { data, total } = await this.db.searchBIN(params);
@@ -336,6 +373,26 @@ export class Router {
   }
   async filters() {
     try {
+      // KV-First for Filters
+      try {
+        const cache = await this.cache.get("bin_cache_v2");
+        if (cache && cache.m) {
+          return this.json({
+            success: true,
+            data: {
+              brands: cache.m.b,
+              types: cache.m.t,
+              categories: cache.m.cat || [],
+              countries: cache.m.c,
+              issuers: cache.m.i
+            }
+          });
+        }
+      } catch (e) {
+        console.error("BinCache filters error:", e);
+      }
+
+      // Fallback
       const cached = await this.cache.get("filters_v2", {});
       if (cached) return this.json(cached);
       const data = await this.db.getFilters();
@@ -360,10 +417,14 @@ export class Router {
       const filterData = await this.db.getFilters();
       
       // 3. Ghi đè vào KV (Refresh Cache)
+      const binRows = await this.db.getBinInventoryForCache();
+      const binCache = BinCache.compress(binRows);
+      
       await Promise.all([
         this.cache.set("dashboard", {}, { success: true, data: dashboardData }, 604800), // 7 ngày
         this.cache.set("stats", {}, { success: true, data: statsData }, 604800),
-        this.cache.set("filters_v2", {}, { success: true, data: filterData }, 604800)
+        this.cache.set("filters_v2", {}, { success: true, data: filterData }, 604800),
+        this.cache.set("bin_cache_v2", {}, binCache, 604800) // 7 ngày
       ]);
       
       // Clear các cache tìm kiếm cũ để user search ra dữ liệu mới
