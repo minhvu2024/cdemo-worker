@@ -116,23 +116,57 @@ export class Router {
     try {
       const body = await request.json();
       const minCards = body.minCards !== undefined ? body.minCards : 10; // Default 10
+      const hasInputBins = body.bins && Array.isArray(body.bins) && body.bins.length > 0;
       
       // KV-First Strategy
       let kvResults = [];
-      let missingBins = [];
+      let total = 0;
       
       try {
         const cache = await this.cache.get("bin_cache_v2");
         if (cache) {
-          const bins = body.bins || [];
-          kvResults = BinCache.lookup(cache, bins);
-          
-          // Phân loại: BIN nào đã có trong KV, BIN nào chưa (source='unknown')
-          missingBins = kvResults.filter(r => r.source === 'unknown').map(r => r.bin);
-          
+          if (hasInputBins) {
+            // TRƯỜNG HỢP 1: Check List Mode (Có nhập danh sách BIN)
+            // 1. Lấy dữ liệu từ KV cho danh sách BIN này
+            const rawResults = BinCache.lookup(cache, body.bins);
+            
+            // 2. Áp dụng Filters (Brand, Country, Type...) lên danh sách kết quả
+            // Chỉ filter những item đã tìm thấy trong Cache (source='cache')
+            // Những item source='unknown' (không tìm thấy) thì giữ nguyên hoặc loại bỏ tùy logic.
+            // Theo yêu cầu: "lọc bỏ ngay các BIN không phải Visa".
+            // => Ta sẽ filter trên tập kết quả.
+            
+            kvResults = rawResults.filter(item => {
+              // Nếu item không tìm thấy trong cache (unknown), ta tạm thời giữ lại để fallback DB
+              // HOẶC: Nếu user đang filter khắt khe (ví dụ chỉ lấy VISA), thì unknown BIN có thể là VISA hoặc không.
+              // Logic an toàn: 
+              // - Nếu source === 'cache': Check filter khớp không. Không khớp -> Loại.
+              // - Nếu source === 'unknown': Giữ lại để check DB (nếu minCards < 10) hoặc loại (nếu minCards >= 10).
+              
+              if (item.source === 'cache') {
+                if (body.brand && item.brand !== body.brand) return false;
+                if (body.type && item.type !== body.type) return false;
+                if (body.category && item.category !== body.category) return false;
+                if (body.country && item.country !== body.country) return false;
+                if (body.issuer && !item.issuer.includes(body.issuer)) return false;
+                if (item.cardCount < minCards) return false;
+                return true;
+              }
+              // Unknown items: Giữ lại để xử lý sau (trừ khi minCards >= 10 thì unknown coi như loại luôn)
+              return minCards < 10; 
+            });
+            
+            total = kvResults.length;
+
+          } else {
+            // TRƯỜNG HỢP 2: Search Mode (Không nhập BIN, quét toàn bộ Cache)
+            const searchResult = BinCache.search(cache, { ...body, limit: 10000 }); // Tăng limit để lấy nhiều kết quả nhất có thể từ KV
+            kvResults = searchResult.bins;
+            total = searchResult.total;
+          }
+
           // OPTIMIZATION: Nếu minCards >= 10, ta KHÔNG CẦN query D1 nữa.
           // Lý do: KV đã chứa toàn bộ BIN có >= 10 cards.
-          // Nếu không thấy trong KV nghĩa là BIN đó < 10 cards -> Không thỏa mãn điều kiện lọc.
           if (minCards >= 10) {
              return this.json({ success: true, bins: kvResults, total: kvResults.length });
           }
@@ -143,17 +177,28 @@ export class Router {
 
       // Fallback D1: Chỉ chạy khi (KV Miss/Lỗi) HOẶC (minCards < 10 và có missing bins)
       
-      // Nếu KV hoạt động tốt và minCards < 10, ta chỉ query D1 cho các missingBins
-      let binsToQuery = (missingBins.length > 0) ? missingBins : (body.bins || []);
+      // Nếu KV hoạt động tốt và minCards < 10, ta chỉ query D1 cho các missingBins (trong trường hợp Check List)
+      // Hoặc query full D1 (trong trường hợp Search Mode mà KV không đủ dữ liệu - ít xảy ra vì KV chứa hết inventory).
       
-      // Nếu binsToQuery rỗng (tức là tìm thấy hết trong KV rồi), trả về luôn
-      if (binsToQuery.length === 0) {
+      // Để đơn giản và an toàn cho Search Mode với minCards < 10:
+      // Nếu Search Mode và minCards < 10 -> Query D1 full params.
+      // Nếu Check List Mode và minCards < 10 -> Query D1 cho các BIN 'unknown'.
+
+      if (!hasInputBins && minCards < 10) {
+          // Search Mode + Low minCards -> D1 Search
+          const result = await this.db.searchBins(body);
+          return this.json({ success: true, bins: result.bins, total: result.total });
+      }
+
+      // Check List Mode + Low minCards -> Fallback D1 cho unknown items
+      let missingBins = kvResults.filter(r => r.source === 'unknown').map(r => r.bin);
+      
+      if (missingBins.length === 0) {
          return this.json({ success: true, bins: kvResults, total: kvResults.length });
       }
 
       // Query D1 cho phần còn thiếu
-      // Lưu ý: params truyền vào searchBins của DB cần đúng format
-      const dbParams = { ...body, bins: binsToQuery }; 
+      const dbParams = { ...body, bins: missingBins }; 
       
       // Check cache D1 cũ (nếu có) cho nhóm này
       const cachedD1 = await this.cache.get("search-bins", dbParams);
@@ -163,27 +208,27 @@ export class Router {
         dbResults = cachedD1.data;
       } else {
         const result = await this.db.searchBins(dbParams);
-        dbResults = result.data || [];
+        dbResults = result.bins || []; // Fix: db.searchBins returns {bins, total}
         // Cache lại kết quả D1 này (ngắn hạn)
         await this.cache.set("search-bins", dbParams, { success: true, data: dbResults }, CACHE_TTL.SEARCH);
       }
       
-      // Merge kết quả: KV Results (đã có) + DB Results (vừa tìm được)
-      // Cần update lại thông tin cho các missingBins trong kvResults bằng dữ liệu từ dbResults
+      // Merge kết quả
       const finalResults = kvResults.map(item => {
-        if (item.source !== 'unknown') return item; // Giữ nguyên item lấy từ KV
+        if (item.source !== 'unknown') return item;
         
-        // Tìm trong kết quả DB
         const foundInDb = dbResults.find(d => d.bin === item.bin);
         if (foundInDb) {
           return { ...item, ...foundInDb, source: 'database' };
         }
-        return item; // Vẫn là unknown (không có trong cả DB)
+        return item; 
       });
       
-      // Nếu kvResults rỗng (do KV lỗi/miss hoàn toàn), dùng dbResults
-      if (kvResults.length === 0) return this.json({ success: true, bins: dbResults, total: dbResults.length });
-
+      // Filter lại lần cuối sau khi merge DB (để loại bỏ những item unknown mà DB cũng không có hoặc không khớp filter)
+      // Lưu ý: db.searchBins đã filter rồi, nên foundInDb chắc chắn khớp filter.
+      // Những item vẫn là unknown (không tìm thấy trong DB) -> Loại bỏ khỏi kết quả hiển thị? 
+      // Hay giữ lại để báo là "Không có dữ liệu"? Thường là giữ lại nhưng hiển thị 0 cards.
+      
       return this.json({ success: true, bins: finalResults, total: finalResults.length });
 
     } catch (error) {
