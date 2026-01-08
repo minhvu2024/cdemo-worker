@@ -341,8 +341,8 @@ export class Router {
           // Khi nào check live/die thì sẽ update lại sau
           // currentDash.data.unknownCards = (currentDash.data.unknownCards || 0) + addedCount; 
           
-          // Lưu lại KV với TTL dài (vẫn giữ nguyên 1h hoặc tăng lên tùy ý, ở đây giữ nguyên logic cũ nhưng không xóa)
-          await this.cache.set("dashboard", {}, currentDash, 604800); // 7 ngày
+          // Lưu lại KV (Vĩnh viễn)
+          await this.cache.set("dashboard", {}, currentDash);
         }
       } catch (e) {
         console.error("KV update failed:", e);
@@ -444,7 +444,8 @@ export class Router {
       if (cached) return this.json(cached);
       const data = await this.db.getDashboardStats();
       const response = { success: true, data };
-      await this.cache.set("dashboard", {}, response, CACHE_TTL.DASHBOARD);
+      // Lưu Cache vĩnh viễn (không set TTL)
+      await this.cache.set("dashboard", {}, response);
       return this.json(response);
     } catch (error) {
       console.error("Dashboard error:", error);
@@ -501,7 +502,7 @@ export class Router {
       const binCache = BinCache.compress(binRows);
       
       await Promise.all([
-        this.cache.set("dashboard", {}, { success: true, data: dashboardData }, 604800), // 7 ngày
+        this.cache.set("dashboard", {}, { success: true, data: dashboardData }), // Vĩnh viễn
         this.cache.set("stats", {}, { success: true, data: statsData }, 604800),
         this.cache.set("filters_v2", {}, { success: true, data: filterData }, 604800),
         this.cache.set("bin_cache_v2", {}, binCache, 604800) // 7 ngày
