@@ -523,7 +523,7 @@ if(totalExpectedCards>=2000||isFullExport){
                 document.getElementById('impErrorSection').classList.add('hidden');
             }
             this.showSuccess('Import completed');
-            this.updateData(); 
+            this.loadDashboard(true); 
         }
     });
   }
