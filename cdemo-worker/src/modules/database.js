@@ -321,6 +321,8 @@ export class DatabaseService {
   }
 
   async getFilters() {
+    // OPTIMIZATION: Query from bin_inventory (65k rows) instead of BIN_Data (400k rows)
+    // Only show filters for BINs that we actually have in inventory
     const [brandsRes, typesRes, categoriesRes, countriesRes, issuersRes] = await Promise.all([
       this.db.prepare("SELECT DISTINCT Brand as brand FROM bin_inventory WHERE total_cards > 0 AND Brand IS NOT NULL AND Brand != 'UNKNOWN' ORDER BY brand ASC").all(),
       this.db.prepare("SELECT DISTINCT Type as type FROM bin_inventory WHERE total_cards > 0 AND Type IS NOT NULL AND Type != 'UNKNOWN' ORDER BY type ASC").all(),
@@ -464,13 +466,28 @@ export class DatabaseService {
     }
   }
 
-  async buildBinCardStats() {
+  async buildBinCardStats(forceRebuild = false) {
+    // CRITICAL SAFETY: Disable automatic full rebuild.
+    // This function used to wipe bin_inventory and rebuild from cdata (21M rows), causing massive D1 spikes.
+    // Now we rely on "Delta Update" during import.
+    // Full rebuild should only be triggered manually by Admin for Monthly Reconciliation.
+    
+    if (!forceRebuild) {
+      console.log("Skipping full D1 rebuild (Delta-only mode active). Only KV cache will be refreshed.");
+      return true;
+    }
+
     try {
+      console.warn("WARNING: Performing Full D1 Rebuild (High Cost Operation)");
+      // Logic cũ: Delete All + Insert All (Chỉ chạy khi forceRebuild = true)
       await this.db.batch([
         this.db.prepare(`DELETE FROM bin_inventory`),
         this.db.prepare(`INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards) SELECT c.Bin, COALESCE(b.Brand,'UNKNOWN'), COALESCE(b.Type,'UNKNOWN'), COALESCE(b.Category,'UNKNOWN'), COALESCE(b.isoCode2,'XX'), COALESCE(b.Issuer,'UNKNOWN'), b.CountryName, COUNT(*) as total_cards, SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards, SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards, SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards, SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards FROM cdata c LEFT JOIN BIN_Data b ON c.Bin = b.BIN GROUP BY c.Bin`)
       ]);
       return true;
-    } catch (e) { return false; }
+    } catch (e) { 
+        console.error("Rebuild failed:", e);
+        return false; 
+    }
   }
 }
