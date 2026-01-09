@@ -391,7 +391,9 @@ export class DatabaseService {
   }
 
   async importCards(cards) {
-    const CARDS_PER_INSERT = 15; // Adjusted to 15 (120 params) based on D1 limits
+    // CRITICAL: D1 parameter limit is strictly < 100. 
+    // Batch size 12 (12 * 8 = 96 params) is safe. Do NOT increase above 12.
+    const CARDS_PER_INSERT = 12; 
     let success = 0, skipped = 0, errors = [];
     const deltaMap = {}; // Delta tracking
     
