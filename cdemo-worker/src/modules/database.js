@@ -391,7 +391,7 @@ export class DatabaseService {
   }
 
   async importCards(cards) {
-    const CARDS_PER_INSERT = 12; // Keep low to respect D1 limits
+    const CARDS_PER_INSERT = 50; // Increased from 12 to 50 for better performance
     let success = 0, skipped = 0, errors = [];
     const deltaMap = {}; // Delta tracking
     
