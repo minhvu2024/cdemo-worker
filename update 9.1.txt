@@ -1,0 +1,157 @@
+1) Mục tiêu triển khai (đúng trọng tâm tối ưu D1 & Worker)
+Mục tiêu chính
+
+Giảm write D1 trong daily import bằng cách chỉ update “delta” theo BIN bị ảnh hưởng (thường ~50 BIN / batch import) thay vì rebuild toàn bộ inventory. 
+
+
+Đảm bảo độ đúng dữ liệu: ~99% hằng ngày + 100% sau monthly refresh (reconciliation). 
+
+
+Tối ưu read: user query đọc từ KV là chính, D1 chỉ là fallback / nguồn rebuild cache. 
+
+
+Tránh vượt ngưỡng gói Worker paid bằng cách:
+
+Ít D1 reads trong request phục vụ user (dồn qua KV).
+
+Gom D1 writes thành batch/transaction.
+
+Chỉ chạy tác vụ nặng (refresh) theo lịch thấp tải.
+
+Success metrics gợi ý để bám
+
+Import time không tăng quá mức (mục tiêu ≤ ~2.5s theo gợi ý). 
+
+
+Query BIN <50ms bằng pre-aggregated table / cache. 
+
+Drift sau refresh thấp (<1% kỳ vọng; cảnh báo nếu >5%). 
+
+
+2) Cách làm tổng thể (kiến trúc 3 lớp để giảm read/write)
+Layer 1 — cdata (D1): nguồn sự thật, insert-only
+
+Import chỉ INSERT vào cdata, không làm COUNT(*) realtime để tránh đọc nặng. 
+
+cdata là nguồn “truth” cho refresh định kỳ. 
+
+
+Layer 2 — bin_inventory (D1): bảng tổng hợp (pre-aggregated)
+
+Dùng để query nhanh cho Dashboard/BIN Checker, tuyệt đối không query aggregate trực tiếp từ cdata mỗi lần load. 
+
+Daily: delta upsert theo BIN thay đổi.
+
+Monthly: full refresh/reconcile để sửa drift, cập nhật metadata.
+
+Layer 3 — KV cache: lớp hiệu năng phục vụ user
+
+User queries đọc 100% từ KV (json nén), fallback mới đọc D1 bin_inventory. 
+
+
+KV chỉ rebuild từ bin_inventory, không rebuild từ cdata để tránh đọc 10M dòng trong luồng user. 
+
+
+3) Daily flow: Delta update (tối ưu write D1)
+Input (mỗi lần import)
+
+Batch card mới (ví dụ 1000 cards) + list BIN bị ảnh hưởng (thường ~50). 
+
+
+Quy trình đề xuất
+
+Tính delta trong Worker memory
+
+Từ list card mới import, gom theo BIN và đếm theo status (live/die/ct/unknown).
+
+Mục tiêu: không query D1 để đếm lại (đọc nặng + chậm). 
+
+
+UPSERT vào bin_inventory theo BIN bị ảnh hưởng
+
+Bắt buộc dùng UPSERT (insert nếu BIN mới, update cộng dồn nếu có). 
+
+
+Batch UPSERT trong 1 transaction (tránh 50 transaction). 
+
+
+(Tuỳ chọn) KV update
+
+Có thể deferred (đợi job rebuild) thay vì update KV từng request nếu muốn giảm chi phí/độ phức tạp. 
+
+
+Tinh thần: daily chỉ chạm D1 “vừa đủ”, tránh read/write bùng nổ.
+
+4) Monthly flow: Refresh/Reconciliation (tối ưu read nặng theo lịch)
+Mục đích
+
+Sửa drift tích luỹ từ delta update, thêm BIN mới vượt ngưỡng, cập nhật metadata, audit. 
+
+5) Các điểm “cần lưu ý” để không vượt ngưỡng D1/Worker (rất quan trọng)
+A) Tránh D1 reads nặng trong request phục vụ user
+
+Dashboard/BIN Checker không bao giờ COUNT(*) trực tiếp từ cdata (10M rows). 
+
+Query user ưu tiên KV → fallback D1 bin_inventory, tuyệt đối tránh fallback sang cdata trong đường nóng. 
+
+
+B) Giảm write amplification
+
+Daily chỉ UPSERT delta theo BIN bị ảnh hưởng (~50), không rebuild 21k/65k BIN mỗi import. 
+
+
+Batch UPSERT + transaction để giảm overhead (latency + quota). 
+
+
+C) Cách xử lý edge cases “đúng bài”
+Concurrent imports cùng BIN: dựa vào tính atomic của DB (tránh race condition bằng UPSERT). 
+Deletion trong cdata: delta không bắt được → refresh tháng sẽ sửa (chấp nhận lag). 
+Refresh timeout: chia prefix nhỏ hơn + retry + không để refresh fail làm hệ thống dừng. 
+
+
+D) Quy tắc triển khai/UI từ mô tả dự án (để khỏi “dính” lỗi cũ)
+
+Không dùng inline script trong HTML (lỗi parser). 
+
+Không regex literal có \n trong template string. 
+
+Không load khối dữ liệu cực lớn lên browser (tránh crash). 
+
+Luôn test ở cdemo trước khi deploy bcchecker. 
+ 
+
+6) Checklist triển khai nhanh (trae triển khai theo nhịp)
+Phase 1 — Daily delta ổn định
+
+Import: batch insert (đang dùng batch insert là hướng thành công theo lịch sử dự án). 
+
+Tính delta trong memory → UPSERT batch vào bin_inventory.
+
+Log latency UPSERT + số BIN cập nhật mỗi import; alert nếu UPSERT lỗi.
+
+Phase 2 — Monthly refresh an toàn
+update data bằng tay, ghi lại thời gian update cuối cùng
+
+
+Phase 3 — KV-first đọc nhanh
+
+Build pipeline: bin_inventory → nén JSON → KV.
+
+User query: KV first; D1 bin_inventory fallback; không chạm cdata ở đường nóng.
+
+
+┌─────────────────────────────────────────────────┐
+│  CLARIFICATION: "Rebuild" nghĩa là gì?         │
+├─────────────────────────────────────────────────┤
+│  Option A: Rewrite toàn bộ bảng (DROP + CREATE)│
+│  ├─ Xóa bảng cũ                                │
+│  ├─ Tạo bảng mới từ cdata                      │
+│  └─ Mất tất cả data trong quá trình            │
+│                                                  │
+│  Option B: Refresh data (UPDATE existing)      │
+│  ├─ Giữ nguyên bảng                            │
+│  ├─ Re-calculate từ cdata                      │
+│  ├─ UPDATE các rows khác biệt                  │
+│  └─ Bảng luôn available                        │
+│                                                  │
+│  Khuyến nghị: Option B (Refresh, not Rebuild)  │
