@@ -391,7 +391,7 @@ export class DatabaseService {
   }
 
   async importCards(cards) {
-    const CARDS_PER_INSERT = 50; // Increased from 12 to 50 for better performance
+    const CARDS_PER_INSERT = 12; // Revert to 12 due to D1 SQL variable limit (SQLITE_ERROR)
     let success = 0, skipped = 0, errors = [];
     const deltaMap = {}; // Delta tracking
     
