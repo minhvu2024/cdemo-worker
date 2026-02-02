@@ -1,5 +1,4 @@
-export function getApp2Js() {
-  return `const NL='\\n';
+const NL='\n';
 window.__APP2_READY=true;console.log('app2.js ready');
 class BINLookup{
   constructor(){
@@ -237,7 +236,7 @@ class BINLookup{
     const params={};
     const bin=document.getElementById('binInput').value.trim();
     if(bin){
-      const parts=bin.split(/[\\n,]/).filter(b=>b.trim());
+      const parts=bin.split(/[\n,]/).filter(b=>b.trim());
       params.bin=parts.join(',');
       if(parts.length>1) params.limit=1000;
     }
@@ -291,7 +290,7 @@ class BINLookup{
     btn.disabled = true;
     btn.innerHTML = '<div class="loading inline-block mr-2"></div>Updating...';
     try {
-      const fullRebuild = confirm('Cảnh báo: Full rebuild sẽ quét toàn bộ bảng cdata và rất tốn D1 (chỉ nên chạy 1 tháng/lần).\\n\\nOK = Full rebuild\\nCancel = Chỉ refresh cache (nhanh)');
+      const fullRebuild = confirm('Cảnh báo: Full rebuild sẽ quét toàn bộ bảng cdata và rất tốn D1 (chỉ nên chạy 1 tháng/lần).\n\nOK = Full rebuild\nCancel = Chỉ refresh cache (nhanh)');
       const init = { method: 'POST' };
       if (fullRebuild) {
         init.headers = { 'Content-Type': 'application/json' };
@@ -343,7 +342,7 @@ class BINLookup{
       if(status.length===0){this.showError('Please select at least one status');return;}
       
       const rawBins=(document.getElementById('cardBinsInput')?.value||'').trim();
-      const bins=rawBins?rawBins.split(',').flatMap(part=>part.split(NL)).map(b=>b.trim()).filter(b=>/^\\d{6}$/.test(b)):[];
+      const bins=rawBins?rawBins.split(',').flatMap(part=>part.split(NL)).map(b=>b.trim()).filter(b=>/^\d{6}$/.test(b)):[];
       
       const params={brand:document.getElementById('cardBrandFilter').value||null,type:document.getElementById('cardTypeFilter').value||null,category:document.getElementById('cardCategoryFilter').value||null,country:document.getElementById('cardCountryFilter').value||null,issuer:document.getElementById('cardIssuerFilter').value.trim()||null,minCards:parseInt(document.getElementById('minCardsInput').value)||10,maxBins:parseInt(document.getElementById('maxBinsInput').value)||10000,status,bins};
       const r=await this.fetchAPI('/api/search-bins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(params)});
@@ -540,5 +539,4 @@ if(totalExpectedCards>=2000||isFullExport){
 (function(){const boot=()=>{try{
   window.binLookup = new BINLookup();
   ['normalizeInput','dupInput','importInput'].forEach(id=>{const textarea=document.getElementById(id),countId=id==='normalizeInput'?'normalizeCount':id==='dupInput'?'dupCount':'importCount';if(textarea&&countId){textarea.addEventListener('input',function(){const lines=this.value.trim().split(NL).filter(l=>l.trim());document.getElementById(countId).textContent=lines.length.toLocaleString();});}});document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='k'){e.preventDefault();const el=document.getElementById('binInput');if(el)el.focus();}});
-}catch(e){console.error('Init Error:',e);}};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();})();`;
-}
+}catch(e){console.error('Init Error:',e);}};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();})();
