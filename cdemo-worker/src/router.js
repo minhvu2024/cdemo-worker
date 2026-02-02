@@ -20,6 +20,14 @@ export class Router {
     this.SECRET = "s3cr3t_k3y_ch4ng3_m3"; // Nên đưa vào env
   }
 
+  getMinInventoryCards(override) {
+    const fromOverride = Number(override);
+    if (Number.isFinite(fromOverride) && fromOverride > 0) return fromOverride;
+    const fromEnv = Number(this.env?.MIN_INVENTORY_CARDS);
+    if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
+    return 15;
+  }
+
   async login(request) {
     try {
       const { username, password } = await request.json();
@@ -115,7 +123,9 @@ export class Router {
   async searchBins(request) {
     try {
       const body = await request.json();
-      const minCards = body.minCards !== undefined ? body.minCards : 10; // Default 10
+      const inventoryMinCards = this.getMinInventoryCards();
+      const minCardsRaw = body.minCards !== undefined ? Number(body.minCards) : inventoryMinCards;
+      const minCards = Number.isFinite(minCardsRaw) ? Math.max(minCardsRaw, inventoryMinCards) : inventoryMinCards;
       const hasInputBins = body.bins && Array.isArray(body.bins) && body.bins.length > 0;
       
       // KV-First Strategy
@@ -166,8 +176,8 @@ export class Router {
           }
 
           // OPTIMIZATION: Nếu minCards >= 10, ta KHÔNG CẦN query D1 nữa.
-          // Lý do: KV đã chứa toàn bộ BIN có >= 10 cards.
-          if (minCards >= 10) {
+          // Lý do: KV đã chứa toàn bộ BIN có >= inventoryMinCards cards.
+          if (minCards >= inventoryMinCards) {
              return this.json({ success: true, bins: kvResults, total: kvResults.length });
           }
         }
@@ -324,8 +334,8 @@ export class Router {
         return this.json({ success: false, error: "No valid cards", data: { total: cards.length, imported: 0, skipped: 0, errors: normalized.errors, errorCount: normalized.errors.length } }, 400);
       }
       
-      // 1. Thực hiện Import vào DB (Delta Update bin_inventory đã được xử lý trong database.js)
-      const result = await this.db.importCards(normalized.valid);
+      const minInventoryCards = this.getMinInventoryCards();
+      const result = await this.db.importCards(normalized.valid, { minInventoryCards });
       
       // 2. Cập nhật KV Dashboard (Cộng dồn tương đối)
       // Logic: Lấy cache cũ -> Cộng thêm số lượng mới -> Ghi đè
@@ -489,8 +499,14 @@ export class Router {
     // Đây là nút "Update Data" thủ công
     // Logic: Quét DB thật -> Ghi đè Cache -> Chính xác 100%
     try {
-      // 1. Rebuild bin_inventory (Nếu cần thiết, nhưng với Delta Update thì bước này nhẹ)
-      const ok1 = await this.db.buildBinCardStats();
+      let body = {};
+      try {
+        body = await request.json();
+      } catch {}
+
+      const minInventoryCards = this.getMinInventoryCards(body?.minInventoryCards);
+      const fullRebuild = body?.fullRebuild === true;
+      const ok1 = await this.db.buildBinCardStats(fullRebuild, minInventoryCards);
       
       // 2. Lấy số liệu mới nhất từ DB
       const dashboardData = await this.db.getDashboardStats();
@@ -498,7 +514,7 @@ export class Router {
       const filterData = await this.db.getFilters();
       
       // 3. Ghi đè vào KV (Refresh Cache)
-      const binRows = await this.db.getBinInventoryForCache();
+      const binRows = await this.db.getBinInventoryForCache(minInventoryCards);
       const binCache = BinCache.compress(binRows);
       
       await Promise.all([
@@ -511,7 +527,10 @@ export class Router {
       // Clear các cache tìm kiếm cũ để user search ra dữ liệu mới
       await this.cache.clear("search");
       
-      return this.json({ success: true, message: "Data updated and cached successfully" });
+      const message = fullRebuild
+        ? `Full rebuild đã chạy (quét toàn bảng cdata). Đã refresh cache theo ngưỡng >= ${minInventoryCards}.`
+        : `Đã refresh cache theo ngưỡng >= ${minInventoryCards}.`;
+      return this.json({ success: true, message });
     } catch (error) {
       return this.json({ success: false, error: error.message }, 500);
     }

@@ -373,16 +373,16 @@ export class DatabaseService {
     return duplicates;
   }
 
-  async getBinInventoryForCache() {
+  async getBinInventoryForCache(minCards = 15) {
     try {
       // Select bins with >= 10 cards for caching
       // Also fetching all columns needed for compression
       const sql = `
         SELECT Bin, Brand, Type, Category, isoCode2, Issuer, total_cards, live_cards, die_cards 
         FROM bin_inventory 
-        WHERE total_cards >= 10
+        WHERE total_cards >= ?
       `;
-      const result = await this.db.prepare(sql).all();
+      const result = await this.db.prepare(sql).bind(minCards).all();
       return result.results || [];
     } catch (e) {
       console.error("Get bin inventory for cache error:", e);
@@ -390,12 +390,13 @@ export class DatabaseService {
     }
   }
 
-  async importCards(cards) {
+  async importCards(cards, options = {}) {
     // CRITICAL: D1 parameter limit is strictly < 100. 
     // Batch size 12 (12 * 8 = 96 params) is safe. Do NOT increase above 12.
     const CARDS_PER_INSERT = 12; 
     let success = 0, skipped = 0, errors = [];
     const deltaMap = {}; // Delta tracking
+    const minInventoryCards = Number.isFinite(Number(options.minInventoryCards)) ? Number(options.minInventoryCards) : 15;
     
     // 1. Chỉ thực hiện Insert vào cdata (Write tối thiểu)
     for (let i = 0; i < cards.length; i += CARDS_PER_INSERT) {
@@ -424,7 +425,7 @@ export class DatabaseService {
     // 2. Cập nhật Delta cho các Bin bị ảnh hưởng (Tối ưu Read/Write - In Memory Delta)
     if (Object.keys(deltaMap).length > 0) {
       try {
-        await this.updateBinStats(deltaMap);
+        await this.applyInventoryDelta(deltaMap, minInventoryCards);
       } catch (e) {
         console.error("Delta update failed:", e);
         // Không fail request import nếu update stats lỗi, chỉ log lại
@@ -434,41 +435,138 @@ export class DatabaseService {
     return { success, skipped, errors };
   }
 
-  async updateBinStats(deltaMap) {
+  async applyInventoryDelta(deltaMap, minInventoryCards) {
     if (!deltaMap || Object.keys(deltaMap).length === 0) return;
-    
+
     const bins = Object.keys(deltaMap);
-    const BATCH_SIZE = 10; 
-    
-    for (let i = 0; i < bins.length; i += BATCH_SIZE) {
-      const batchBins = bins.slice(i, i + BATCH_SIZE);
-      const values = [];
-      const placeholders = [];
-      
-      batchBins.forEach(bin => {
+    const maxVars = 90;
+    const chunkSize = Math.max(1, Math.floor(maxVars / 1));
+
+    const existing = new Set();
+    for (let i = 0; i < bins.length; i += chunkSize) {
+      const chunk = bins.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = await this.db.prepare(`SELECT Bin FROM bin_inventory WHERE Bin IN (${placeholders})`).bind(...chunk).all();
+      (rows.results || []).forEach(r => existing.add(r.Bin));
+    }
+
+    const toUpdate = [];
+    const toRecalc = [];
+    for (const bin of bins) {
+      if (existing.has(bin)) toUpdate.push(bin);
+      else toRecalc.push(bin);
+    }
+
+    if (toUpdate.length > 0) {
+      const statements = [];
+      for (const bin of toUpdate) {
         const d = deltaMap[bin];
-        // Bin, Total, Live, CT, Die, Unknown
-        placeholders.push("(?, 'UNKNOWN', 'UNKNOWN', 'UNKNOWN', 'XX', 'UNKNOWN', NULL, ?, ?, ?, ?, ?, strftime('%s','now'))");
-        values.push(bin, d.total, d.live, d.ct, d.die, d.unknown);
-      });
-      
+        statements.push(
+          this.db
+            .prepare(
+              "UPDATE bin_inventory SET total_cards = total_cards + ?, live_cards = live_cards + ?, ct_cards = ct_cards + ?, die_cards = die_cards + ?, unknown_cards = unknown_cards + ?, updated_at = strftime('%s','now') WHERE Bin = ?"
+            )
+            .bind(d.total, d.live, d.ct, d.die, d.unknown, bin)
+        );
+        statements.push(
+          this.db
+            .prepare("DELETE FROM bin_inventory WHERE Bin = ? AND total_cards < ?")
+            .bind(bin, minInventoryCards)
+        );
+      }
+      await this.db.batch(statements);
+    }
+
+    if (toRecalc.length === 0) return;
+
+    for (let i = 0; i < toRecalc.length; i += chunkSize) {
+      const chunk = toRecalc.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => "?").join(",");
+
+      const agg = await this.db
+        .prepare(
+          `SELECT
+            Bin,
+            COUNT(*) AS total_cards,
+            SUM(CASE WHEN status='1' THEN 1 ELSE 0 END) AS live_cards,
+            SUM(CASE WHEN status='2' THEN 1 ELSE 0 END) AS ct_cards,
+            SUM(CASE WHEN status='0' THEN 1 ELSE 0 END) AS die_cards,
+            SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown_cards
+          FROM cdata
+          WHERE Bin IN (${placeholders})
+          GROUP BY Bin`
+        )
+        .bind(...chunk)
+        .all();
+
+      const aggRows = agg.results || [];
+      const eligibleBins = aggRows.filter(r => (r.total_cards || 0) >= minInventoryCards).map(r => r.Bin);
+
+      if (eligibleBins.length === 0) {
+        await this.db.prepare(`DELETE FROM bin_inventory WHERE Bin IN (${placeholders})`).bind(...chunk).run();
+        continue;
+      }
+
+      const metaPlaceholders = eligibleBins.map(() => "?").join(",");
+      const metaRows = await this.db
+        .prepare(`SELECT BIN, Brand, Type, Category, isoCode2, Issuer, CountryName FROM BIN_Data WHERE BIN IN (${metaPlaceholders})`)
+        .bind(...eligibleBins)
+        .all();
+
+      const metaMap = new Map();
+      (metaRows.results || []).forEach(r => metaMap.set(r.BIN, r));
+
+      const values = [];
+      const insertPlaceholders = [];
+      for (const r of aggRows) {
+        if ((r.total_cards || 0) < minInventoryCards) continue;
+        const meta = metaMap.get(r.Bin);
+        insertPlaceholders.push("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s','now'))");
+        values.push(
+          r.Bin,
+          meta?.Brand || 'UNKNOWN',
+          meta?.Type || 'UNKNOWN',
+          meta?.Category || 'UNKNOWN',
+          meta?.isoCode2 || 'XX',
+          meta?.Issuer || 'UNKNOWN',
+          meta?.CountryName || null,
+          r.total_cards || 0,
+          r.live_cards || 0,
+          r.ct_cards || 0,
+          r.die_cards || 0,
+          r.unknown_cards || 0
+        );
+      }
+
       const sql = `
         INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards, updated_at)
-        VALUES ${placeholders.join(",")}
+        VALUES ${insertPlaceholders.join(",")}
         ON CONFLICT(Bin) DO UPDATE SET
-          total_cards = bin_inventory.total_cards + excluded.total_cards,
-          live_cards = bin_inventory.live_cards + excluded.live_cards,
-          ct_cards = bin_inventory.ct_cards + excluded.ct_cards,
-          die_cards = bin_inventory.die_cards + excluded.die_cards,
-          unknown_cards = bin_inventory.unknown_cards + excluded.unknown_cards,
+          Brand = excluded.Brand,
+          Type = excluded.Type,
+          Category = excluded.Category,
+          isoCode2 = excluded.isoCode2,
+          Issuer = excluded.Issuer,
+          CountryName = excluded.CountryName,
+          total_cards = excluded.total_cards,
+          live_cards = excluded.live_cards,
+          ct_cards = excluded.ct_cards,
+          die_cards = excluded.die_cards,
+          unknown_cards = excluded.unknown_cards,
           updated_at = excluded.updated_at
       `;
-      
+
       await this.db.prepare(sql).bind(...values).run();
+
+      const deleteBins = chunk.filter(b => !eligibleBins.includes(b));
+      if (deleteBins.length > 0) {
+        const delPlaceholders = deleteBins.map(() => "?").join(",");
+        await this.db.prepare(`DELETE FROM bin_inventory WHERE Bin IN (${delPlaceholders})`).bind(...deleteBins).run();
+      }
     }
   }
 
-  async buildBinCardStats(forceRebuild = false) {
+  async buildBinCardStats(forceRebuild = false, minInventoryCards = 15) {
     // CRITICAL SAFETY: Disable automatic full rebuild.
     // This function used to wipe bin_inventory and rebuild from cdata (21M rows), causing massive D1 spikes.
     // Now we rely on "Delta Update" during import.
@@ -484,7 +582,7 @@ export class DatabaseService {
       // Logic cũ: Delete All + Insert All (Chỉ chạy khi forceRebuild = true)
       await this.db.batch([
         this.db.prepare(`DELETE FROM bin_inventory`),
-        this.db.prepare(`INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards) SELECT c.Bin, COALESCE(b.Brand,'UNKNOWN'), COALESCE(b.Type,'UNKNOWN'), COALESCE(b.Category,'UNKNOWN'), COALESCE(b.isoCode2,'XX'), COALESCE(b.Issuer,'UNKNOWN'), b.CountryName, COUNT(*) as total_cards, SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards, SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards, SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards, SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards FROM cdata c LEFT JOIN BIN_Data b ON c.Bin = b.BIN GROUP BY c.Bin`)
+        this.db.prepare(`INSERT INTO bin_inventory (Bin, Brand, Type, Category, isoCode2, Issuer, CountryName, total_cards, live_cards, ct_cards, die_cards, unknown_cards) SELECT c.Bin, COALESCE(b.Brand,'UNKNOWN'), COALESCE(b.Type,'UNKNOWN'), COALESCE(b.Category,'UNKNOWN'), COALESCE(b.isoCode2,'XX'), COALESCE(b.Issuer,'UNKNOWN'), b.CountryName, COUNT(*) as total_cards, SUM(CASE WHEN c.status='1' THEN 1 ELSE 0 END) as live_cards, SUM(CASE WHEN c.status='2' THEN 1 ELSE 0 END) as ct_cards, SUM(CASE WHEN c.status='0' THEN 1 ELSE 0 END) as die_cards, SUM(CASE WHEN c.status='unknown' THEN 1 ELSE 0 END) as unknown_cards FROM cdata c LEFT JOIN BIN_Data b ON c.Bin = b.BIN GROUP BY c.Bin HAVING COUNT(*) >= ?`).bind(minInventoryCards)
       ]);
       return true;
     } catch (e) { 

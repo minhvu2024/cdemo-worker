@@ -291,9 +291,13 @@ class BINLookup{
     btn.disabled = true;
     btn.innerHTML = '<div class="loading inline-block mr-2"></div>Updating...';
     try {
-      const r = await this.fetchAPI('/api/rebuild-stats', {
-        method: 'POST'
-      });
+      const fullRebuild = confirm('Cảnh báo: Full rebuild sẽ quét toàn bộ bảng cdata và rất tốn D1 (chỉ nên chạy 1 tháng/lần).\n\nOK = Full rebuild\nCancel = Chỉ refresh cache (nhanh)');
+      const init = { method: 'POST' };
+      if (fullRebuild) {
+        init.headers = { 'Content-Type': 'application/json' };
+        init.body = JSON.stringify({ fullRebuild: true });
+      }
+      const r = await this.fetchAPI('/api/rebuild-stats', init);
       const d = await r.json();
       if(d.success) {
         this.showSuccess('Data updated successfully');
@@ -453,7 +457,7 @@ if(totalExpectedCards>=2000||isFullExport){
   cancelExport(){this.cardExporter.cancelExport=true;document.getElementById('exportProgressSection').classList.add('hidden');}
   getExportFileName(binCount,cardCount){const d=new Date();return (binCount||0)+'bin_'+(cardCount||0)+'card_'+d.getDate()+'.'+(d.getMonth()+1)+'.txt';}
   downloadExport(){const content=document.getElementById('exportOutput').value;if(!content){this.showError('Nothing to download');return;}const meta=this.lastExportMeta||{binCount:this.cardExporter.bins.length,cardCount:null};const cardCount=meta.cardCount!==null&&meta.cardCount!==undefined?meta.cardCount:content.split(NL).filter(l=>l.trim()).length;const blob=new Blob([content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=this.getExportFileName(meta.binCount,cardCount);a.click();URL.revokeObjectURL(url);this.showSuccess('Download started');}
-  clearCardFilters(){document.getElementById('cardBrandFilter').value='';document.getElementById('cardTypeFilter').value='';document.getElementById('cardCategoryFilter').value='';document.getElementById('cardCountryFilter').value='';document.getElementById('cardIssuerFilter').value='';document.getElementById('minCardsInput').value='10';document.getElementById('cardsPerBinInput').value='50';document.getElementById('maxBinsInput').value='10000';document.getElementById('statusUnknown').checked=true;document.getElementById('statusLive').checked=true;document.getElementById('statusCT').checked=true;document.getElementById('statusDie').checked=false;document.getElementById('cardResultsSection').classList.add('hidden');document.getElementById('exportOptionsSection').classList.add('hidden');document.getElementById('exportResultSection').classList.add('hidden');this.cardExporter.bins=[];}
+  clearCardFilters(){document.getElementById('cardBrandFilter').value='';document.getElementById('cardTypeFilter').value='';document.getElementById('cardCategoryFilter').value='';document.getElementById('cardCountryFilter').value='';document.getElementById('cardIssuerFilter').value='';document.getElementById('minCardsInput').value='15';document.getElementById('cardsPerBinInput').value='50';document.getElementById('maxBinsInput').value='10000';document.getElementById('statusUnknown').checked=true;document.getElementById('statusLive').checked=true;document.getElementById('statusCT').checked=true;document.getElementById('statusDie').checked=false;document.getElementById('cardResultsSection').classList.add('hidden');document.getElementById('exportOptionsSection').classList.add('hidden');document.getElementById('exportResultSection').classList.add('hidden');this.cardExporter.bins=[];}
   async normalize(){const input=document.getElementById('normalizeInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');const btn=document.getElementById('normalizeBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Processing...';try{const filterExpired=document.getElementById('filterExpiredCheck').checked;const r=await this.fetchAPI('/api/normalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:lines,filterExpired})});const d=await r.json();if(d.success){document.getElementById('normValid').textContent=d.data.validCount;document.getElementById('normError').textContent=d.data.errorCount;document.getElementById('normalizeOutput').value=d.data.valid.join(NL);document.getElementById('normalizeResult').classList.remove('hidden');if(d.data.errorCount>0){document.getElementById('normalizeErrors').value=d.data.errors.join(NL);document.getElementById('normErrorSection').classList.remove('hidden');}else{document.getElementById('normErrorSection').classList.add('hidden');}this.showSuccess('Normalized '+d.data.validCount+' cards');}}catch(e){this.showError('Normalize failed');}finally{btn.disabled=false;btn.innerHTML=html;}}
   
   async checkDup(){
