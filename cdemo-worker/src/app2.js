@@ -8,6 +8,7 @@ class BINLookup{
     this.filters={};
     this.cardExporter={bins:[],cancelExport:false};
     this.sortConfig={type:null,col:null,asc:true};
+    this.lastExportMeta=null;
     this.token = localStorage.getItem('token');
     this.init();
   }
@@ -399,20 +400,20 @@ this.cardExporter.cancelExport=false;document.getElementById('exportProgressSect
 if(totalExpectedCards>=2000||isFullExport){
   try{
     let totalExported=0;
+    const allChunks=[];
     for(let i=0;i<this.cardExporter.bins.length;i++){
       if(this.cardExporter.cancelExport){this.showError('Export cancelled');return;}
       const binData=this.cardExporter.bins[i];
       const bin=binData.bin;
       const binTotalCards=binData.cardCount;
       const BATCH_SIZE=10000;
-      let binExportedCards=[];
       document.getElementById('exportProgressText').textContent='Exporting BIN '+bin+' ('+(i+1)+'/'+this.cardExporter.bins.length+')...';
       for(let offset=0;offset<binTotalCards;offset+=BATCH_SIZE){
         if(this.cardExporter.cancelExport) break;
         const r=await this.fetchAPI('/api/export-cards',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bins:[bin],limit:BATCH_SIZE,offset,status,format,sequential:true})});
         const d=await r.json();
         if(d.success&&d.cards.length>0){
-          binExportedCards.push(...d.cards);
+          allChunks.push(d.cards.join(NL)+NL);
           totalExported+=d.cards.length;
           const progress=((i+(offset+d.cards.length)/binTotalCards)/this.cardExporter.bins.length*100).toFixed(0);
           document.getElementById('exportProgressFill').style.width=progress+'%';
@@ -424,21 +425,19 @@ if(totalExpectedCards>=2000||isFullExport){
           break;
         }
       }
-      if(binExportedCards.length>0){
-        const blob=new Blob([binExportedCards.join(NL)],{type:'text/plain'});
-        const url=URL.createObjectURL(blob);
-        const a=document.createElement('a');
-        a.href=url;
-        a.download='BIN_'+bin+'_'+binExportedCards.length+'.txt';
-        a.style.display='none';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        await new Promise(r=>setTimeout(r,500));
-      }
     }
-    this.showSuccess('Export completed! Files downloaded.');
+    this.lastExportMeta={binCount:this.cardExporter.bins.length,cardCount:totalExported};
+    const blob=new Blob([allChunks.join('')],{type:'text/plain'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=this.getExportFileName(this.lastExportMeta.binCount,this.lastExportMeta.cardCount);
+    a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    this.showSuccess('Export completed! File downloaded.');
     document.getElementById('exportProgressSection').classList.add('hidden');
   }catch(e){this.showError('Export failed: '+e.message);}
 } else {
@@ -449,9 +448,11 @@ if(totalExpectedCards>=2000||isFullExport){
   const d=await r.json();if(d.success){
     allCards.push(...d.cards);
     const progress=((i+batch.length)/this.cardExporter.bins.length*100).toFixed(0);const elapsed=Math.floor((Date.now()-startTime)/1000);const totalCardsExported=allCards.length;const speed=elapsed>0?Math.floor(totalCardsExported/elapsed):0;document.getElementById('exportProgressFill').style.width=progress+'%';document.getElementById('exportProgressText').textContent='Processing '+(i+batch.length)+' / '+this.cardExporter.bins.length+' BINs...';document.getElementById('exportedCardsCount').textContent=totalCardsExported;document.getElementById('exportTime').textContent=elapsed;document.getElementById('exportSpeed').textContent=speed;}}
+    this.lastExportMeta={binCount:this.cardExporter.bins.length,cardCount:allCards.length};
     document.getElementById('exportOutput').value=allCards.join(NL);document.getElementById('exportResultSection').classList.remove('hidden');document.getElementById('exportProgressSection').classList.add('hidden');this.showSuccess('Exported '+allCards.length+' cards');}catch(e){this.showError('Export failed: '+e.message);}}}
   cancelExport(){this.cardExporter.cancelExport=true;document.getElementById('exportProgressSection').classList.add('hidden');}
-  downloadExport(){const content=document.getElementById('exportOutput').value;if(!content){this.showError('Nothing to download');return;}const blob=new Blob([content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='cards_export_'+Date.now()+'.txt';a.click();URL.revokeObjectURL(url);this.showSuccess('Download started');}
+  getExportFileName(binCount,cardCount){const d=new Date();return (binCount||0)+'bin_'+(cardCount||0)+'card_'+d.getDate()+'.'+(d.getMonth()+1)+'.txt';}
+  downloadExport(){const content=document.getElementById('exportOutput').value;if(!content){this.showError('Nothing to download');return;}const meta=this.lastExportMeta||{binCount:this.cardExporter.bins.length,cardCount:null};const cardCount=meta.cardCount!==null&&meta.cardCount!==undefined?meta.cardCount:content.split(NL).filter(l=>l.trim()).length;const blob=new Blob([content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=this.getExportFileName(meta.binCount,cardCount);a.click();URL.revokeObjectURL(url);this.showSuccess('Download started');}
   clearCardFilters(){document.getElementById('cardBrandFilter').value='';document.getElementById('cardTypeFilter').value='';document.getElementById('cardCategoryFilter').value='';document.getElementById('cardCountryFilter').value='';document.getElementById('cardIssuerFilter').value='';document.getElementById('minCardsInput').value='10';document.getElementById('cardsPerBinInput').value='50';document.getElementById('maxBinsInput').value='10000';document.getElementById('statusUnknown').checked=true;document.getElementById('statusLive').checked=true;document.getElementById('statusCT').checked=true;document.getElementById('statusDie').checked=false;document.getElementById('cardResultsSection').classList.add('hidden');document.getElementById('exportOptionsSection').classList.add('hidden');document.getElementById('exportResultSection').classList.add('hidden');this.cardExporter.bins=[];}
   async normalize(){const input=document.getElementById('normalizeInput').value.trim();if(!input)return this.showError('Please enter cards');const lines=input.split(NL).filter(l=>l.trim());if(lines.length>100000)return this.showError('Maximum 100,000 cards allowed');const btn=document.getElementById('normalizeBtn');const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<div class="loading inline-block mr-2"></div>Processing...';try{const filterExpired=document.getElementById('filterExpiredCheck').checked;const r=await this.fetchAPI('/api/normalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cards:lines,filterExpired})});const d=await r.json();if(d.success){document.getElementById('normValid').textContent=d.data.validCount;document.getElementById('normError').textContent=d.data.errorCount;document.getElementById('normalizeOutput').value=d.data.valid.join(NL);document.getElementById('normalizeResult').classList.remove('hidden');if(d.data.errorCount>0){document.getElementById('normalizeErrors').value=d.data.errors.join(NL);document.getElementById('normErrorSection').classList.remove('hidden');}else{document.getElementById('normErrorSection').classList.add('hidden');}this.showSuccess('Normalized '+d.data.validCount+' cards');}}catch(e){this.showError('Normalize failed');}finally{btn.disabled=false;btn.innerHTML=html;}}
   
