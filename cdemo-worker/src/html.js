@@ -127,7 +127,10 @@ body{padding-top:60px}
 <div class="glass rounded-2xl p-4">
 <div class="flex justify-between items-center mb-4">
 <h2 class="text-2xl font-bold">Dashboard</h2>
+<div class="flex items-center gap-2">
+<input id="rebuildMinCardsInput" type="number" min="1" step="1" value="15" class="w-[110px] px-3 py-2 rounded-lg text-sm" placeholder="Min BIN">
 <button id="updateDataBtn" class="btn glass px-3 py-2 rounded-lg hover-lift text-[#4A8BFF] font-bold"><i class="fas fa-database mr-2"></i>Update Data</button>
+</div>
 </div>
 <div id="dashContent">
 <div class="text-center py-8"><div class="loading inline-block"></div></div>

@@ -291,12 +291,15 @@ class BINLookup{
     btn.disabled = true;
     btn.innerHTML = '<div class="loading inline-block mr-2"></div>Updating...';
     try {
+      const minInventoryCardsEl = document.getElementById('rebuildMinCardsInput');
+      const minInventoryCardsRaw = minInventoryCardsEl ? parseInt(minInventoryCardsEl.value) : 15;
+      const minInventoryCards = (!isNaN(minInventoryCardsRaw) && minInventoryCardsRaw > 0) ? minInventoryCardsRaw : 15;
       const fullRebuild = confirm('Cảnh báo: Full rebuild sẽ quét toàn bộ bảng cdata và rất tốn D1 (chỉ nên chạy 1 tháng/lần).\\n\\nOK = Full rebuild\\nCancel = Chỉ refresh cache (nhanh)');
-      const init = { method: 'POST' };
-      if (fullRebuild) {
-        init.headers = { 'Content-Type': 'application/json' };
-        init.body = JSON.stringify({ fullRebuild: true });
-      }
+      const init = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullRebuild, minInventoryCards })
+      };
       const r = await this.fetchAPI('/api/rebuild-stats', init);
       const d = await r.json();
       if(d.success) {
